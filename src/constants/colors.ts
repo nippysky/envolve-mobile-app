@@ -1,82 +1,89 @@
 /**
  * EnvolveCare Plus — Brand Design System
- * Mirrors the web app's Tailwind palette exactly.
+ * Exact tokens from the EnvolveCare Express web app (globals.css @theme).
+ * Brand primary: #00a6d4 (brand-500)
  */
 
 export const Colors = {
-  // ── Brand ──────────────────────────────────────────────────────────────────
-  brand:     '#4f46e5',   // indigo — primary CTA, links, active states
-  brandDark: '#3730a3',
-  brandLight:'#eef2ff',
+  // ── Brand (cyan — matches web brand-500) ─────────────────────────────────
+  brand:     '#00a6d4',   // brand-500 — primary CTA, links, active tabs
+  brandDark: '#0091ba',   // brand-600 — pressed / hover states
+  brandLight:'#e6f6fb',   // brand-50  — tinted backgrounds
 
-  teal:      '#0d9488',   // secondary — customer actions, success CTAs
-  tealLight: '#f0fdfa',
+  // ── Secondary (leaf green) ────────────────────────────────────────────────
+  teal:      '#16a34a',   // leaf-500 — success, confirmed actions
+  tealLight: '#dcfce7',   // leaf-100
 
-  cyan:      '#06b6d4',   // accent gradient end
-  cyanLight: '#ecfeff',
+  // ── Accent (kept for backwards compat) ────────────────────────────────────
+  cyan:      '#00a6d4',
+  cyanLight: '#e6f6fb',
 
-  // ── Ink / Text ─────────────────────────────────────────────────────────────
-  ink:   '#0f172a',   // headings, body
-  ink2:  '#334155',   // secondary body
-  ink3:  '#64748b',   // labels, captions
-  ink4:  '#94a3b8',   // placeholders, disabled
+  // ── Ink / Text (from web --color-ink-*) ───────────────────────────────────
+  ink:   '#0b1417',   // ink     — headings, primary body
+  ink2:  '#4a5560',   // ink-2   — secondary body
+  ink3:  '#6b7780',   // ink-3   — labels, captions
+  ink4:  '#94a0ab',   // ink-4   — placeholders, disabled
 
-  // ── Backgrounds ────────────────────────────────────────────────────────────
-  bg:      '#f1f5f9',   // page background
-  bgSubtle:'#f8fafc',
-  bgMuted: '#e2e8f0',
+  // ── Backgrounds (from web --color-bg-*) ───────────────────────────────────
+  bg:      '#fafaf9',   // bg        — page background
+  bgSubtle:'#f7f7f5',   // bg-subtle
+  bgMuted: '#f0f0ee',   // bg-muted
 
   // ── Surface ────────────────────────────────────────────────────────────────
   white: '#ffffff',
-  line:  '#e2e8f0',   // borders, dividers
+  line:  '#e7e5e0',   // border / divider (web --color-line)
+
+  // ── Dark surface (portal / admin sidebar) ─────────────────────────────────
+  inkBg:     '#0c1418',   // ink-bg      — dark card backgrounds
+  inkBgElev: '#111c21',   // ink-bg-elev — elevated dark surfaces
 
   // ── Semantic ───────────────────────────────────────────────────────────────
   success:      '#16a34a',
-  successLight: '#f0fdf4',
+  successLight: '#dcfce7',
   successBorder:'#bbf7d0',
 
   warning:      '#d97706',
-  warningLight: '#fffbeb',
+  warningLight: '#fef3c7',
   warningBorder:'#fde68a',
 
   danger:       '#dc2626',
-  dangerLight:  '#fff1f2',
+  dangerLight:  '#fee2e2',
   dangerBorder: '#fecdd3',
 
-  info:         '#0284c7',
-  infoLight:    '#f0f9ff',
-  infoBorder:   '#bae6fd',
+  info:         '#0891b2',
+  infoLight:    '#cffafe',
+  infoBorder:   '#a5f3fc',
 
-  // ── Header background ───────────────────────────────────────────────────────
-  headerBg: '#0f172a',
+  // ── Header background ─────────────────────────────────────────────────────
+  headerBg: '#0c1418',   // matches web admin sidebar dark bg
 
-  // ── Order status pills ──────────────────────────────────────────────────────
+  // ── Order status pills ────────────────────────────────────────────────────
   orderStatus: {
-    pending:    { bg: '#fffbeb', text: '#92400e', dot: '#f59e0b'  },
-    confirmed:  { bg: '#eff6ff', text: '#1e40af', dot: '#3b82f6'  },
-    processing: { bg: '#eef2ff', text: '#3730a3', dot: '#6366f1'  },
-    dispatched: { bg: '#f0fdfa', text: '#115e59', dot: '#14b8a6'  },
-    delivered:  { bg: '#f0fdf4', text: '#166534', dot: '#22c55e'  },
-    cancelled:  { bg: '#fff1f2', text: '#9f1239', dot: '#f43f5e'  },
+    pending:    { bg: '#fef3c7', text: '#92400e', dot: '#f59e0b' },
+    confirmed:  { bg: '#e6f6fb', text: '#006a8a', dot: '#00a6d4' },
+    processing: { bg: '#cdeff7', text: '#005f7a', dot: '#0091ba' },
+    dispatched: { bg: '#dcfce7', text: '#14532d', dot: '#16a34a' },
+    delivered:  { bg: '#dcfce7', text: '#14532d', dot: '#16a34a' },
+    cancelled:  { bg: '#fee2e2', text: '#991b1b', dot: '#dc2626' },
   } as Record<string, { bg: string; text: string; dot: string }>,
 
-  // ── Payment status pills ────────────────────────────────────────────────────
+  // ── Payment status pills ──────────────────────────────────────────────────
   paymentStatus: {
     unpaid:   { bg: '#fff7ed', text: '#9a3412', dot: '#fb923c' },
-    partial:  { bg: '#fefce8', text: '#713f12', dot: '#eab308' },
-    paid:     { bg: '#f0fdf4', text: '#166534', dot: '#22c55e' },
+    partial:  { bg: '#fef3c7', text: '#713f12', dot: '#eab308' },
+    paid:     { bg: '#dcfce7', text: '#14532d', dot: '#16a34a' },
     refunded: { bg: '#faf5ff', text: '#581c87', dot: '#a855f7' },
-    failed:   { bg: '#fff1f2', text: '#9f1239', dot: '#f43f5e' },
+    failed:   { bg: '#fee2e2', text: '#991b1b', dot: '#dc2626' },
   } as Record<string, { bg: string; text: string; dot: string }>,
 
-  // ── Delivery status pills ───────────────────────────────────────────────────
+  // ── Delivery status pills ─────────────────────────────────────────────────
   deliveryStatus: {
-    awaiting_dispatch: { bg: '#f8fafc', text: '#475569', dot: '#94a3b8' },
-    assigned:          { bg: '#eff6ff', text: '#1e40af', dot: '#3b82f6' },
-    in_transit:        { bg: '#eef2ff', text: '#3730a3', dot: '#6366f1' },
-    out_for_delivery:  { bg: '#f0fdfa', text: '#115e59', dot: '#14b8a6' },
-    delivered:         { bg: '#f0fdf4', text: '#166534', dot: '#22c55e' },
-    failed:            { bg: '#fff1f2', text: '#9f1239', dot: '#f43f5e' },
+    awaiting_dispatch: { bg: '#f0f0ee', text: '#4a5560', dot: '#94a0ab' },
+    assigned:          { bg: '#e6f6fb', text: '#006a8a', dot: '#00a6d4' },
+    in_transit:        { bg: '#cdeff7', text: '#005f7a', dot: '#0091ba' },
+    out_for_delivery:  { bg: '#dcfce7', text: '#14532d', dot: '#16a34a' },
+    delivered:         { bg: '#dcfce7', text: '#14532d', dot: '#16a34a' },
+    failed:            { bg: '#fee2e2', text: '#991b1b', dot: '#dc2626' },
     returned:          { bg: '#fff7ed', text: '#9a3412', dot: '#fb923c' },
   } as Record<string, { bg: string; text: string; dot: string }>,
 } as const;

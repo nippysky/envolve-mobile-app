@@ -3,50 +3,48 @@
     "name": "EnvolveCare Plus",
     "slug": "envolvecare-plus",
     "version": "1.0.0",
-    "runtimeVersion": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "envolvecareplus",
     "userInterfaceStyle": "light",
 
-    "splash": {
-      "image": "./assets/images/splash-icon.png",
-      "resizeMode": "contain",
-      "backgroundColor": "#4f46e5"
+    "runtimeVersion": {
+      "policy": "appVersion"
     },
 
     "ios": {
-      "supportsTablet": true,
+      "supportsTablet": false,
       "bundleIdentifier": "com.envolvepharma.envolvecareplus",
-      "buildNumber": "1",
-      "icon": "./assets/images/icon.png",
       "infoPlist": {
-        "NSCameraUsageDescription": "We use your camera to scan prescriptions and QR codes.",
-        "NSPhotoLibraryUsageDescription": "We access your photo library so you can upload prescription images.",
-        "NSLocationWhenInUseUsageDescription": "We use your location to estimate delivery times and show nearby pharmacies.",
-        "NSFaceIDUsageDescription": "We use Face ID to securely authenticate your account.",
-        "NSUserTrackingUsageDescription": "We use this to deliver relevant content and improve your experience.",
+        "NSCameraUsageDescription": "EnvolveCare Plus uses your camera to scan prescriptions and barcodes.",
+        "NSPhotoLibraryUsageDescription": "EnvolveCare Plus accesses your photo library so you can upload prescription images.",
+        "NSLocationWhenInUseUsageDescription": "EnvolveCare Plus uses your location to estimate delivery times and find nearby options.",
+        "NSFaceIDUsageDescription": "EnvolveCare Plus uses Face ID to securely sign you in.",
+        "NSUserTrackingUsageDescription": "This helps us show you relevant products and improve your experience.",
         "ITSAppUsesNonExemptEncryption": false
       }
     },
 
     "android": {
       "package": "com.envolvepharma.envolvecareplus",
-      "versionCode": 1,
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/android-icon-foreground.png",
         "backgroundImage": "./assets/images/android-icon-background.png",
         "monochromeImage": "./assets/images/android-icon-monochrome.png",
-        "backgroundColor": "#4f46e5"
+        "backgroundColor": "#00a6d4"
       },
       "permissions": [
         "android.permission.CAMERA",
+        "android.permission.READ_MEDIA_IMAGES",
         "android.permission.READ_EXTERNAL_STORAGE",
         "android.permission.WRITE_EXTERNAL_STORAGE",
         "android.permission.INTERNET",
         "android.permission.ACCESS_NETWORK_STATE",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_COARSE_LOCATION",
         "android.permission.VIBRATE",
-        "android.permission.RECEIVE_BOOT_COMPLETED"
+        "android.permission.USE_BIOMETRIC",
+        "android.permission.USE_FINGERPRINT"
       ],
       "predictiveBackGestureEnabled": false
     },
@@ -58,13 +56,19 @@
 
     "plugins": [
       "expo-router",
-      "expo-secure-store",
+      [
+        "expo-secure-store",
+        {
+          "configureAndroidBackup": true
+        }
+      ],
       [
         "expo-splash-screen",
         {
-          "backgroundColor": "#4f46e5",
+          "backgroundColor": "#00a6d4",
           "image": "./assets/images/splash-icon.png",
-          "imageWidth": 76
+          "imageWidth": 260,
+          "resizeMode": "contain"
         }
       ]
     ],
@@ -74,12 +78,17 @@
       "reactCompiler": true
     },
 
+    "updates": {
+      "url": "https://u.expo.dev/859a57dc-55ec-432c-a774-07f07495da25"
+    },
+
     "extra": {
+      "router": {},
       "eas": {
-        "projectId": "your-eas-project-id-here"
+        "projectId": "859a57dc-55ec-432c-a774-07f07495da25"
       }
     },
 
-    "owner": "envolvepharma"
+    "owner": "nippysky"
   }
 }
