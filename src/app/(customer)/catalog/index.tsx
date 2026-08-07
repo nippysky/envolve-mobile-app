@@ -48,7 +48,7 @@ export default function Catalog() {
   const [debouncedSearch, setDebouncedSearch] = useState('');
 
   // Simple debounce
-  const [timer, setTimer] = React.useRef<ReturnType<typeof setTimeout>>();
+  const timer = React.useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   function handleSearch(text: string) {
     setSearch(text);
     clearTimeout(timer.current);

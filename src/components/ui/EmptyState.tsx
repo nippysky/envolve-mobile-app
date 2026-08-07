@@ -1,29 +1,35 @@
 import React from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { Colors } from '@/constants/colors';
+import { type } from '@/constants/typography';
+import { Icon, type IconName } from '@/components/ui/Icon';
 import { Button } from './Button';
 
 interface Props {
-  icon?:        string;    // emoji
+  iconName?:    IconName;
+  icon?:        string;      // legacy emoji fallback
   title:        string;
   subtitle?:    string;
   actionLabel?: string;
   onAction?:    () => void;
 }
 
-export function EmptyState({ icon = '📭', title, subtitle, actionLabel, onAction }: Props) {
+export function EmptyState({
+  iconName = 'clipboard',
+  title,
+  subtitle,
+  actionLabel,
+  onAction,
+}: Props) {
   return (
     <View style={styles.wrapper}>
-      <Text style={styles.icon}>{icon}</Text>
+      <View style={styles.iconWrap}>
+        <Icon name={iconName} size={36} color={Colors.ink4} />
+      </View>
       <Text style={styles.title}>{title}</Text>
       {subtitle && <Text style={styles.subtitle}>{subtitle}</Text>}
       {actionLabel && onAction && (
-        <Button
-          variant="outline"
-          size="sm"
-          onPress={onAction}
-          style={styles.btn}
-        >
+        <Button variant="outline" size="sm" onPress={onAction} style={styles.btn}>
           {actionLabel}
         </Button>
       )}
@@ -33,14 +39,22 @@ export function EmptyState({ icon = '📭', title, subtitle, actionLabel, onActi
 
 const styles = StyleSheet.create({
   wrapper: {
-    flex:            1,
+    flex:           1,
+    alignItems:     'center',
+    justifyContent: 'center',
+    padding:        40,
+    gap:            10,
+  },
+  iconWrap: {
+    width:           72,
+    height:          72,
+    borderRadius:    20,
+    backgroundColor: Colors.bgMuted,
     alignItems:      'center',
     justifyContent:  'center',
-    padding:         40,
-    gap:             8,
+    marginBottom:    4,
   },
-  icon:     { fontSize: 48 },
-  title:    { fontSize: 17, fontWeight: '700', color: Colors.ink,  textAlign: 'center' },
-  subtitle: { fontSize: 14, color: Colors.ink3, textAlign: 'center', lineHeight: 20 },
-  btn:      { marginTop: 16 },
+  title:    { ...type.h3, color: Colors.ink,  textAlign: 'center' },
+  subtitle: { ...type.bodySm, color: Colors.ink3, textAlign: 'center', lineHeight: 20 },
+  btn:      { marginTop: 12 },
 });

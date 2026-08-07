@@ -8,6 +8,7 @@ import {
   View,
 } from 'react-native';
 import { Colors } from '@/constants/colors';
+import { type } from '@/constants/typography';
 
 interface Props extends TextInputProps {
   label?:       string;
@@ -41,18 +42,18 @@ export function Input({
           !!error && styles.rowError,
         ]}
       >
-        {leftIcon && <View style={styles.icon}>{leftIcon}</View>}
+        {leftIcon && <View style={styles.iconLeft}>{leftIcon}</View>}
 
         <TextInput
           {...rest}
-          style={[styles.input, leftIcon && styles.inputWithLeft, style]}
+          style={[styles.input, !!leftIcon && styles.inputWithLeft, style]}
           placeholderTextColor={Colors.ink4}
           onFocus={e => { setFocused(true); rest.onFocus?.(e); }}
           onBlur={e  => { setFocused(false); rest.onBlur?.(e); }}
         />
 
         {rightIcon && (
-          <Pressable style={styles.icon} onPress={onRightPress} hitSlop={8}>
+          <Pressable style={styles.iconRight} onPress={onRightPress} hitSlop={10}>
             {rightIcon}
           </Pressable>
         )}
@@ -71,8 +72,7 @@ const styles = StyleSheet.create({
   wrapper: { marginBottom: 16 },
 
   label: {
-    fontSize:     13,
-    fontWeight:   '600',
+    ...type.label,
     color:        Colors.ink2,
     marginBottom: 6,
   },
@@ -83,27 +83,33 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.white,
     borderWidth:     1.5,
     borderColor:     Colors.line,
-    borderRadius:    12,
+    borderRadius:    14,
     overflow:        'hidden',
   },
   rowFocused: { borderColor: Colors.brand },
   rowError:   { borderColor: Colors.danger },
 
   input: {
-    flex:            1,
+    flex:              1,
     paddingHorizontal: 14,
-    paddingVertical:   13,
-    fontSize:        15,
-    color:           Colors.ink,
+    paddingVertical:   14,
+    ...type.body,
+    color:             Colors.ink,
   },
   inputWithLeft: { paddingLeft: 8 },
 
-  icon: {
-    paddingHorizontal: 12,
+  iconLeft: {
+    paddingLeft:  14,
+    paddingRight: 4,
+    justifyContent: 'center',
+    alignItems:     'center',
+  },
+  iconRight: {
+    paddingHorizontal: 14,
     justifyContent:    'center',
     alignItems:        'center',
   },
 
-  error: { marginTop: 5, fontSize: 12, color: Colors.danger },
-  hint:  { marginTop: 5, fontSize: 12, color: Colors.ink4   },
+  error: { ...type.caption, marginTop: 5, color: Colors.danger },
+  hint:  { ...type.caption, marginTop: 5, color: Colors.ink4   },
 });

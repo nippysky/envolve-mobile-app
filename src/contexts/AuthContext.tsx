@@ -11,12 +11,12 @@ import React, {
   useCallback,
   useContext,
   useEffect,
-  useRef,
   useState,
 } from 'react';
-import { router }        from 'expo-router';
-import { TokenStorage }  from '@/lib/storage';
-import { api, ApiError } from '@/lib/api-client';
+import { router }                    from 'expo-router';
+import { TokenStorage }              from '@/lib/storage';
+// api-client used by screens; not needed directly in AuthContext (logout uses raw fetch)
+import { API_BASE, MOBILE_HEADERS }  from '@/constants/api';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -97,8 +97,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // ── Logout ───────────────────────────────────────────────────────────────
   const logout = useCallback(async () => {
     try {
-      // Best-effort server-side revocation
-      await api.post('/api/auth/logout').catch(() => {});
+      // Send the refresh token so the backend can revoke the jti from DB.
+      // The logout endpoint accepts it via Authorization: Bearer header.
+      const refreshToken = await TokenStorage.getRefresh();
+      await fetch(`${API_BASE}/api/auth/logout`, {
+        method:  'POST',
+        headers: {
+          ...MOBILE_HEADERS,
+          ...(refreshToken ? { Authorization: `Bearer ${refreshToken}` } : {}),
+        },
+      }).catch(() => {
+        // Best-effort — never block logout on a network failure
+      });
     } finally {
       await TokenStorage.clear();
       setUser(null);

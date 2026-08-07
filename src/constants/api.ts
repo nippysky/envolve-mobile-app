@@ -4,7 +4,7 @@
  */
 
 export const API_BASE =
-  process.env.EXPO_PUBLIC_API_URL ?? 'https://www.envolvepharm.com.ng';
+  process.env.EXPO_PUBLIC_API_URL ?? 'https://envolve-pharma.vercel.app';
 
 /** Sent on every mobile request so the API can return JSON errors (not HTML redirects) */
 export const MOBILE_HEADERS = {

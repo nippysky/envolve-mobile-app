@@ -1,6 +1,7 @@
 import React from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { Colors } from '@/constants/colors';
+import { type } from '@/constants/typography';
 import { humanise } from '@/lib/format';
 
 interface Props {
@@ -11,19 +12,19 @@ interface Props {
   dot?:   string;
 }
 
-export function StatusBadge({ status, type = 'order', bg, text, dot }: Props) {
+export function StatusBadge({ status, type: badgeType = 'order', bg, text, dot }: Props) {
   const key = status.toLowerCase();
 
   let palette: { bg: string; text: string; dot: string };
 
   if (bg && text && dot) {
     palette = { bg, text, dot };
-  } else if (type === 'payment') {
-    palette = Colors.paymentStatus[key] ?? { bg: Colors.bgMuted, text: Colors.ink3, dot: Colors.ink4 };
-  } else if (type === 'delivery') {
+  } else if (badgeType === 'payment') {
+    palette = Colors.paymentStatus[key]  ?? { bg: Colors.bgMuted, text: Colors.ink3, dot: Colors.ink4 };
+  } else if (badgeType === 'delivery') {
     palette = Colors.deliveryStatus[key] ?? { bg: Colors.bgMuted, text: Colors.ink3, dot: Colors.ink4 };
   } else {
-    palette = Colors.orderStatus[key] ?? { bg: Colors.bgMuted, text: Colors.ink3, dot: Colors.ink4 };
+    palette = Colors.orderStatus[key]    ?? { bg: Colors.bgMuted, text: Colors.ink3, dot: Colors.ink4 };
   }
 
   return (
@@ -41,19 +42,15 @@ const styles = StyleSheet.create({
     flexDirection:  'row',
     alignItems:     'center',
     gap:            5,
-    paddingHorizontal: 10,
-    paddingVertical:    5,
+    paddingHorizontal: 9,
+    paddingVertical:   4,
     borderRadius:   20,
     alignSelf:      'flex-start',
   },
-  dot: {
-    width:        6,
-    height:       6,
-    borderRadius: 3,
-  },
+  dot: { width: 5, height: 5, borderRadius: 3 },
   label: {
-    fontSize:   11,
-    fontWeight: '700',
-    letterSpacing: 0.3,
+    ...type.overline,
+    fontSize:      10,
+    letterSpacing: 0.4,
   },
 });

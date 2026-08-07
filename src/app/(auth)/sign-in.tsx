@@ -1,7 +1,12 @@
-import React, { useState } from 'react';
+/**
+ * Role Selection Screen — auth entry point.
+ * Two cards: Customer and Staff/Admin/Driver.
+ * Guests can also browse the public catalogue without logging in.
+ */
+
+import React from 'react';
 import {
-  KeyboardAvoidingView,
-  Platform,
+  Image,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -11,254 +16,167 @@ import {
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Colors } from '@/constants/colors';
-import { Button } from '@/components/ui/Button';
-import { Input } from '@/components/ui/Input';
-import { useAuth } from '@/contexts/AuthContext';
-import { api, ApiError } from '@/lib/api-client';
-import type { AppUser } from '@/contexts/AuthContext';
+import { type } from '@/constants/typography';
+import { Icon, type IconName } from '@/components/ui/Icon';
 
-/**
- * API unwraps the outer { status, message, data } envelope automatically.
- * So the returned value is already the inner { user, tokens } object.
- */
-interface LoginData {
-  user:   AppUser;
-  tokens: {
-    access_token:  string;
-    refresh_token: string;
-    expires_in:    number;
-  };
+interface RoleCard {
+  iconName: IconName;
+  title:    string;
+  desc:     string;
+  accent:   string;
+  tint:     string;
+  route:    string;
 }
 
-type RoleTab = 'customer' | 'staff';
+const ROLES: RoleCard[] = [
+  {
+    iconName: 'shop',
+    title:    'Customer',
+    desc:     'Shop, order medicines & track your deliveries',
+    accent:   Colors.brand,
+    tint:     Colors.brandLight,
+    route:    '/(auth)/customer-login',
+  },
+  {
+    iconName: 'team',
+    title:    'Staff / Admin / Driver',
+    desc:     'Pharmacists, admins, managers & delivery drivers',
+    accent:   Colors.teal,
+    tint:     Colors.tealLight,
+    route:    '/(auth)/staff-login',
+  },
+];
 
-export default function SignIn() {
-  const insets    = useSafeAreaInsets();
-  const { login } = useAuth();
-
-  const [tab,      setTab]      = useState<RoleTab>('customer');
-  const [email,    setEmail]    = useState('');
-  const [password, setPassword] = useState('');
-  const [showPwd,  setShowPwd]  = useState(false);
-  const [loading,  setLoading]  = useState(false);
-  const [error,    setError]    = useState('');
-
-  const endpoint = tab === 'customer'
-    ? '/api/auth/customer/login'
-    : '/api/auth/staff/login';
-
-  function switchTab(t: RoleTab) {
-    setTab(t);
-    setError('');
-    setEmail('');
-    setPassword('');
-  }
-
-  async function handleLogin() {
-    if (!email.trim() || !password) {
-      setError('Please enter your email and password.');
-      return;
-    }
-    setError('');
-    setLoading(true);
-    try {
-      const res = await api.post<LoginData>(endpoint, {
-        email:    email.trim().toLowerCase(),
-        password,
-      });
-      // api-client unwraps .data, so res = { user, tokens }
-      await login(res.user, res.tokens.access_token, res.tokens.refresh_token);
-    } catch (e) {
-      if (e instanceof ApiError) {
-        setError(e.message);
-      } else {
-        setError('Something went wrong. Please try again.');
-      }
-    } finally {
-      setLoading(false);
-    }
-  }
+export default function RoleSelect() {
+  const insets = useSafeAreaInsets();
 
   return (
-    <KeyboardAvoidingView
-      style={{ flex: 1, backgroundColor: Colors.white }}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+    <ScrollView
+      contentContainerStyle={[
+        styles.scroll,
+        { paddingTop: insets.top + 40, paddingBottom: insets.bottom + 40 },
+      ]}
+      showsVerticalScrollIndicator={false}
+      style={styles.root}
     >
-      <ScrollView
-        contentContainerStyle={[
-          styles.scroll,
-          { paddingTop: insets.top + 40, paddingBottom: insets.bottom + 32 },
-        ]}
-        keyboardShouldPersistTaps="handled"
-        showsVerticalScrollIndicator={false}
+      {/* Brand */}
+      <View style={styles.header}>
+        <Image
+          source={require('../../../assets/images/logo.png')}
+          style={styles.logo}
+          resizeMode="contain"
+        />
+        <Text style={styles.tagline}>Your pharmacy, delivered</Text>
+      </View>
+
+      {/* Headline */}
+      <Text style={styles.heroTitle}>Welcome back</Text>
+      <Text style={styles.heroSub}>Select your role to continue</Text>
+
+      {/* Role cards */}
+      <View style={styles.cards}>
+        {ROLES.map((role) => (
+          <RoleCardBtn key={role.title} role={role} />
+        ))}
+      </View>
+
+      {/* Browse catalogue without login */}
+      <Pressable
+        style={styles.guestBtn}
+        onPress={() => router.push('/(public)/catalogue')}
       >
-        {/* Brand */}
-        <View style={styles.brand}>
-          <View style={styles.logoCircle}>
-            <Text style={styles.logoEmoji}>💊</Text>
-          </View>
-          <Text style={styles.appName}>EnvolveCare Plus</Text>
-          <Text style={styles.tagline}>Your pharmacy, delivered</Text>
-        </View>
+        <Icon name="product" size={16} color={Colors.ink3} />
+        <Text style={styles.guestBtnText}>Browse catalogue without signing in</Text>
+        <Icon name="chevron-right" size={16} color={Colors.ink4} />
+      </Pressable>
 
-        {/* Role tabs */}
-        <View style={styles.tabs}>
-          <Pressable
-            style={[styles.tabBtn, tab === 'customer' && styles.tabBtnActive]}
-            onPress={() => switchTab('customer')}
-          >
-            <Text style={[styles.tabText, tab === 'customer' && styles.tabTextActive]}>
-              Customer
-            </Text>
-          </Pressable>
-          <Pressable
-            style={[styles.tabBtn, tab === 'staff' && styles.tabBtnActive]}
-            onPress={() => switchTab('staff')}
-          >
-            <Text style={[styles.tabText, tab === 'staff' && styles.tabTextActive]}>
-              Staff / Driver
-            </Text>
-          </Pressable>
-        </View>
+      {/* Legal */}
+      <Text style={styles.legalText}>
+        By signing in you agree to our{' '}
+        <Text style={styles.legalLink} onPress={() => router.push('/terms')}>Terms</Text>
+        {' '}and{' '}
+        <Text style={styles.legalLink} onPress={() => router.push('/privacy')}>Privacy Policy</Text>
+      </Text>
+    </ScrollView>
+  );
+}
 
-        {/* Card */}
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>Welcome back</Text>
-          <Text style={styles.cardSub}>
-            {tab === 'customer'
-              ? 'Sign in to shop and track your orders'
-              : 'Sign in to your staff or driver account'}
-          </Text>
-
-          {error ? (
-            <View style={styles.errorBox}>
-              <Text style={styles.errorText}>{error}</Text>
-            </View>
-          ) : null}
-
-          <Input
-            label="Email address"
-            placeholder="you@example.com"
-            value={email}
-            onChangeText={setEmail}
-            autoCapitalize="none"
-            keyboardType="email-address"
-            autoCorrect={false}
-            returnKeyType="next"
-          />
-
-          <Input
-            label="Password"
-            placeholder="••••••••"
-            value={password}
-            onChangeText={setPassword}
-            secureTextEntry={!showPwd}
-            returnKeyType="done"
-            onSubmitEditing={handleLogin}
-            rightIcon={
-              <Text style={styles.eyeIcon}>{showPwd ? '🙈' : '👁️'}</Text>
-            }
-            onRightPress={() => setShowPwd(v => !v)}
-          />
-
-          <Pressable
-            onPress={() => router.push('/(auth)/forgot-password')}
-            style={styles.forgotBtn}
-          >
-            <Text style={styles.forgotText}>Forgot password?</Text>
-          </Pressable>
-
-          <Button
-            variant="primary"
-            size="lg"
-            fullWidth
-            loading={loading}
-            onPress={handleLogin}
-          >
-            Sign In
-          </Button>
-        </View>
-
-        {/* Legal links */}
-        <View style={styles.legal}>
-          <Text style={styles.legalText}>
-            By signing in you agree to our{' '}
-            <Text style={styles.legalLink} onPress={() => router.push('/terms')}>
-              Terms
-            </Text>{' '}
-            and{' '}
-            <Text style={styles.legalLink} onPress={() => router.push('/privacy')}>
-              Privacy Policy
-            </Text>
-          </Text>
-        </View>
-      </ScrollView>
-    </KeyboardAvoidingView>
+function RoleCardBtn({ role }: { role: RoleCard }) {
+  return (
+    <Pressable
+      style={({ pressed }) => [
+        styles.card,
+        { borderLeftColor: role.accent, borderLeftWidth: 4 },
+        pressed && styles.cardPressed,
+      ]}
+      onPress={() => router.push(role.route as any)}
+    >
+      <View style={[styles.iconWrap, { backgroundColor: role.tint }]}>
+        <Icon name={role.iconName} size={24} color={role.accent} />
+      </View>
+      <View style={styles.cardBody}>
+        <Text style={[styles.cardTitle, { color: role.accent }]}>{role.title}</Text>
+        <Text style={styles.cardDesc}>{role.desc}</Text>
+      </View>
+      <Icon name="chevron-right" size={18} color={role.accent} />
+    </Pressable>
   );
 }
 
 const styles = StyleSheet.create({
-  scroll: { flexGrow: 1, paddingHorizontal: 24 },
+  root:   { flex: 1, backgroundColor: Colors.bg },
+  scroll: { paddingHorizontal: 24 },
 
-  brand: { alignItems: 'center', marginBottom: 28 },
-  logoCircle: {
-    width:           80,
-    height:          80,
-    borderRadius:    40,
-    backgroundColor: Colors.brand + '15',
-    alignItems:      'center',
-    justifyContent:  'center',
-    marginBottom:    12,
-  },
-  logoEmoji: { fontSize: 38 },
-  appName:   { fontSize: 22, fontWeight: '800', color: Colors.ink, letterSpacing: -0.3 },
-  tagline:   { fontSize: 13, color: Colors.ink3, marginTop: 4 },
+  header: { alignItems: 'center', marginBottom: 36 },
+  logo:   { width: 200, height: 73, marginBottom: 10 },
+  tagline:{ ...type.caption, color: Colors.ink3, letterSpacing: 0.3 },
 
-  tabs: {
-    flexDirection:   'row',
-    backgroundColor: Colors.bgMuted,
-    borderRadius:    14,
-    padding:         4,
-    marginBottom:    20,
-  },
-  tabBtn: {
-    flex:           1,
-    paddingVertical: 10,
-    borderRadius:   10,
-    alignItems:     'center',
-  },
-  tabBtnActive: { backgroundColor: Colors.white },
-  tabText:      { fontSize: 13, fontWeight: '600', color: Colors.ink3 },
-  tabTextActive:{ color: Colors.brand },
+  heroTitle: { ...type.title, color: Colors.ink, marginBottom: 4 },
+  heroSub:   { ...type.body, color: Colors.ink3, marginBottom: 28 },
+
+  cards: { gap: 14 },
 
   card: {
+    flexDirection:   'row',
+    alignItems:      'center',
     backgroundColor: Colors.white,
-    borderRadius:    20,
-    padding:         24,
+    borderRadius:    16,
+    padding:         18,
+    gap:             14,
     shadowColor:     '#000',
-    shadowOpacity:   0.07,
-    shadowRadius:    20,
-    shadowOffset:    { width: 0, height: 4 },
-    elevation:       4,
+    shadowOpacity:   0.06,
+    shadowRadius:    12,
+    shadowOffset:    { width: 0, height: 2 },
+    elevation:       2,
+    borderWidth:     1,
+    borderColor:     Colors.line,
   },
-  cardTitle: { fontSize: 22, fontWeight: '800', color: Colors.ink, marginBottom: 4 },
-  cardSub:   { fontSize: 14, color: Colors.ink3, marginBottom: 24 },
+  cardPressed: { opacity: 0.82, transform: [{ scale: 0.985 }] },
 
-  errorBox: {
-    backgroundColor: Colors.danger + '12',
-    borderRadius:    10,
-    padding:         12,
-    marginBottom:    16,
-    borderLeftWidth: 3,
-    borderLeftColor: Colors.danger,
+  iconWrap: {
+    width: 52, height: 52, borderRadius: 16,
+    alignItems: 'center', justifyContent: 'center',
   },
-  errorText: { fontSize: 13, color: Colors.danger, lineHeight: 19 },
+  cardBody:  { flex: 1 },
+  cardTitle: { ...type.h3, marginBottom: 2 },
+  cardDesc:  { ...type.caption, color: Colors.ink3, lineHeight: 18 },
 
-  forgotBtn:  { alignSelf: 'flex-end', marginBottom: 20, marginTop: -4 },
-  forgotText: { fontSize: 13, color: Colors.brand, fontWeight: '600' },
-  eyeIcon:    { fontSize: 17 },
+  guestBtn: {
+    flexDirection:   'row',
+    alignItems:      'center',
+    gap:             8,
+    paddingVertical: 16,
+    marginTop:       24,
+    justifyContent:  'center',
+  },
+  guestBtnText: { ...type.bodyMed, color: Colors.ink3 },
 
-  legal: { marginTop: 28, alignItems: 'center' },
-  legalText: { fontSize: 12, color: Colors.ink4, textAlign: 'center', lineHeight: 18 },
+  legalText: {
+    ...type.caption,
+    color:     Colors.ink4,
+    textAlign: 'center',
+    lineHeight: 18,
+    marginTop: 12,
+  },
   legalLink: { color: Colors.brand, fontWeight: '600' },
 });

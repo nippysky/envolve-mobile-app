@@ -11,23 +11,27 @@ import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useQuery } from '@tanstack/react-query';
 import { Colors } from '@/constants/colors';
+import { type } from '@/constants/typography';
+import { Icon, type IconName } from '@/components/ui/Icon';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { formatNaira } from '@/lib/format';
 import { api } from '@/lib/api-client';
 import { useAuth } from '@/contexts/AuthContext';
 
-interface Summary {
-  revenue:       number;
-  revenue_trend: number | null;
-  orders:        number;
-  orders_trend:  number | null;
-  avg_order:     number;
-  new_customers: number;
+interface Kpis {
+  revenue:           number;
+  revenueTrend:      number | null;
+  orders:            number;
+  ordersTrend:       number | null;
+  avgOrderValue:     number;
+  activeShipments:   number;
+  newCustomers:      number;
+  newCustomersTrend: number | null;
 }
 
 interface SummaryResponse {
-  summary: Summary;
-  // there's more but we only use summary section
+  period: number;
+  kpis:   Kpis;
 }
 
 export default function Overview() {
@@ -40,160 +44,254 @@ export default function Overview() {
     refetchInterval: 60_000,
   });
 
-  const summary = data?.summary;
+  const kpis = data?.kpis;
+  const isAdmin = user?.role === 'ADMIN' || user?.role === 'SUPER_ADMIN';
 
   return (
     <View style={[styles.root, { paddingTop: insets.top }]}>
+      {/* Top bar */}
       <View style={styles.topBar}>
-        <Text style={styles.greeting}>Good day, {user?.first_name} 👋</Text>
-        <Text style={styles.role}>{user?.role?.replace('_', ' ')}</Text>
+        <View>
+          <Text style={styles.greeting}>Good day, {user?.first_name} 👋</Text>
+          <Text style={styles.role}>{user?.role?.replace('_', ' ')}</Text>
+        </View>
+        <View style={styles.topBarIcon}>
+          <Icon name="overview" size={20} color={Colors.brand} />
+        </View>
       </View>
 
       <ScrollView
-        contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + 24 }]}
+        contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + 32 }]}
         showsVerticalScrollIndicator={false}
         refreshControl={
-          <RefreshControl refreshing={isRefetching} onRefresh={refetch} tintColor={Colors.brand} />
+          <RefreshControl
+            refreshing={isRefetching}
+            onRefresh={refetch}
+            tintColor={Colors.brand}
+          />
         }
       >
-        <Text style={styles.sectionTitle}>Last 30 days</Text>
+        {/* KPI section */}
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionTitle}>Last 30 days</Text>
+        </View>
 
         {isLoading ? (
           <View style={styles.statsGrid}>
             {Array.from({ length: 4 }).map((_, i) => (
-              <Skeleton key={i} height={100} radius={16} style={{ flex: 1, minWidth: '45%' }} />
+              <Skeleton key={i} height={108} radius={18} style={{ flex: 1, minWidth: '45%' }} />
             ))}
           </View>
         ) : (
           <View style={styles.statsGrid}>
             <StatCard
-              emoji="💰"
+              iconName="money"
               label="Revenue"
-              value={formatNaira(summary?.revenue ?? 0)}
-              trend={summary?.revenue_trend}
-              color={Colors.success}
+              value={formatNaira(kpis?.revenue ?? 0)}
+              trend={kpis?.revenueTrend}
+              accentColor={Colors.success}
             />
             <StatCard
-              emoji="📦"
+              iconName="orders"
               label="Orders"
-              value={String(summary?.orders ?? 0)}
-              trend={summary?.orders_trend}
-              color={Colors.brand}
+              value={String(kpis?.orders ?? 0)}
+              trend={kpis?.ordersTrend}
+              accentColor={Colors.brand}
             />
             <StatCard
-              emoji="🧾"
+              iconName="chart"
               label="Avg Order"
-              value={formatNaira(summary?.avg_order ?? 0)}
-              color={Colors.teal}
+              value={formatNaira(kpis?.avgOrderValue ?? 0)}
+              accentColor={Colors.teal}
             />
             <StatCard
-              emoji="👤"
+              iconName="customers"
               label="New Customers"
-              value={String(summary?.new_customers ?? 0)}
-              color={Colors.cyan}
+              value={String(kpis?.newCustomers ?? 0)}
+              trend={kpis?.newCustomersTrend}
+              accentColor={Colors.info}
             />
           </View>
         )}
 
-        <Text style={styles.sectionTitle}>Quick actions</Text>
+        {/* Quick actions */}
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionTitle}>Quick actions</Text>
+        </View>
+
         <View style={styles.actionsGrid}>
-          <ActionCard emoji="📋" label="Orders"    onPress={() => router.push('/(staff)/orders')} />
-          <ActionCard emoji="👥" label="Customers" onPress={() => router.push('/(staff)/customers')} />
-          <ActionCard emoji="➕" label="Add Product" onPress={() => router.push('/(staff)/products/new')} />
+          <ActionCard
+            iconName="orders"
+            label="Orders"
+            color={Colors.brand}
+            onPress={() => router.push('/(staff)/orders')}
+          />
+          <ActionCard
+            iconName="customers"
+            label="Customers"
+            color={Colors.teal}
+            onPress={() => router.push('/(staff)/customers')}
+          />
+          <ActionCard
+            iconName="product"
+            label="Add Product"
+            color={Colors.warning}
+            onPress={() => router.push('/(staff)/products/new')}
+          />
+          {isAdmin && (
+            <ActionCard
+              iconName="team"
+              label="Team"
+              color={Colors.info}
+              onPress={() => router.push('/(staff)/team')}
+            />
+          )}
         </View>
       </ScrollView>
     </View>
   );
 }
 
+// ── Sub-components ────────────────────────────────────────────────────────────
+
 function StatCard({
-  emoji,
+  iconName,
   label,
   value,
   trend,
-  color,
+  accentColor,
 }: {
-  emoji:  string;
-  label:  string;
-  value:  string;
-  trend?: number | null;
-  color:  string;
+  iconName:    IconName;
+  label:       string;
+  value:       string;
+  trend?:      number | null;
+  accentColor: string;
 }) {
   return (
-    <View style={[stat.wrap, { borderTopColor: color, borderTopWidth: 3 }]}>
-      <Text style={stat.emoji}>{emoji}</Text>
+    <View style={[stat.wrap, { borderTopColor: accentColor, borderTopWidth: 3 }]}>
+      <View style={[stat.iconWrap, { backgroundColor: accentColor + '15' }]}>
+        <Icon name={iconName} size={18} color={accentColor} />
+      </View>
       <Text style={stat.value} numberOfLines={1} adjustsFontSizeToFit>{value}</Text>
       <Text style={stat.label}>{label}</Text>
       {trend !== undefined && trend !== null && (
-        <Text style={[stat.trend, { color: trend >= 0 ? Colors.success : Colors.danger }]}>
-          {trend >= 0 ? '▲' : '▼'} {Math.abs(trend)}% vs last period
-        </Text>
+        <View style={stat.trendRow}>
+          <Icon
+            name={trend >= 0 ? 'chart' : 'chevron-down'}
+            size={10}
+            color={trend >= 0 ? Colors.success : Colors.danger}
+          />
+          <Text style={[stat.trend, { color: trend >= 0 ? Colors.success : Colors.danger }]}>
+            {Math.abs(trend)}% vs last period
+          </Text>
+        </View>
       )}
     </View>
   );
 }
 
-function ActionCard({ emoji, label, onPress }: { emoji: string; label: string; onPress: () => void }) {
+function ActionCard({
+  iconName,
+  label,
+  color,
+  onPress,
+}: {
+  iconName: IconName;
+  label:    string;
+  color:    string;
+  onPress:  () => void;
+}) {
   return (
     <Pressable
-      style={({ pressed }) => [action.wrap, pressed && { opacity: 0.7 }]}
+      style={({ pressed }) => [action.wrap, pressed && { opacity: 0.7, transform: [{ scale: 0.97 }] }]}
       onPress={onPress}
     >
-      <Text style={action.emoji}>{emoji}</Text>
+      <View style={[action.iconWrap, { backgroundColor: color + '15' }]}>
+        <Icon name={iconName} size={24} color={color} />
+      </View>
       <Text style={action.label}>{label}</Text>
     </Pressable>
   );
 }
 
 const styles = StyleSheet.create({
-  root:     { flex: 1, backgroundColor: Colors.bg },
-  topBar:   {
+  root:    { flex: 1, backgroundColor: Colors.bg },
+  topBar:  {
+    flexDirection:     'row',
+    alignItems:        'center',
+    justifyContent:    'space-between',
     paddingHorizontal: 20,
     paddingVertical:   16,
     backgroundColor:   Colors.white,
-    borderBottomWidth: 1,
+    borderBottomWidth: 0.5,
     borderBottomColor: Colors.line,
   },
-  greeting:     { fontSize: 20, fontWeight: '800', color: Colors.ink },
-  role:         { fontSize: 12, color: Colors.ink4, marginTop: 2, textTransform: 'uppercase', letterSpacing: 0.5 },
-  content:      { padding: 16, gap: 12 },
-  sectionTitle: { fontSize: 15, fontWeight: '700', color: Colors.ink, marginTop: 4 },
-  statsGrid:    { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
+  topBarIcon: {
+    width:           40,
+    height:          40,
+    borderRadius:    12,
+    backgroundColor: Colors.brandLight,
+    alignItems:      'center',
+    justifyContent:  'center',
+  },
+  greeting:     { ...type.h2, color: Colors.ink },
+  role:         { ...type.overline, color: Colors.ink4, marginTop: 2 },
+  content:      { padding: 16, gap: 4 },
+  sectionHeader:{ paddingVertical: 10 },
+  sectionTitle: { ...type.h4, color: Colors.ink },
+  statsGrid:    { flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginBottom: 8 },
   actionsGrid:  { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
 });
 
 const stat = StyleSheet.create({
-  wrap:  {
-    flex:            1,
-    minWidth:        '45%',
-    backgroundColor: Colors.white,
-    borderRadius:    16,
-    padding:         14,
-    shadowColor:     '#000',
-    shadowOpacity:   0.05,
-    shadowRadius:    8,
-    elevation:       2,
+  wrap: {
+    flex:             1,
+    minWidth:         '45%',
+    backgroundColor:  Colors.white,
+    borderRadius:     18,
+    padding:          16,
+    shadowColor:      '#000',
+    shadowOpacity:    0.05,
+    shadowRadius:     10,
+    shadowOffset:     { width: 0, height: 2 },
+    elevation:        2,
+    gap:              4,
   },
-  emoji: { fontSize: 24, marginBottom: 6 },
-  value: { fontSize: 18, fontWeight: '800', color: Colors.ink },
-  label: { fontSize: 12, color: Colors.ink3, marginTop: 2 },
-  trend: { fontSize: 11, marginTop: 4, fontWeight: '600' },
+  iconWrap: {
+    width:          36,
+    height:         36,
+    borderRadius:   10,
+    alignItems:     'center',
+    justifyContent: 'center',
+    marginBottom:   6,
+  },
+  value:   { ...type.h2, color: Colors.ink },
+  label:   { ...type.caption, color: Colors.ink3 },
+  trendRow:{ flexDirection: 'row', alignItems: 'center', gap: 3, marginTop: 2 },
+  trend:   { ...type.caption, fontWeight: '600' },
 });
 
 const action = StyleSheet.create({
   wrap: {
-    flex:            1,
-    minWidth:        '28%',
+    flex:           1,
+    minWidth:       '44%',
     backgroundColor: Colors.white,
-    borderRadius:    16,
-    padding:         18,
-    alignItems:      'center',
-    gap:             8,
-    shadowColor:     '#000',
-    shadowOpacity:   0.05,
-    shadowRadius:    8,
-    elevation:       2,
+    borderRadius:   18,
+    padding:        18,
+    alignItems:     'center',
+    gap:            10,
+    shadowColor:    '#000',
+    shadowOpacity:  0.05,
+    shadowRadius:   10,
+    shadowOffset:   { width: 0, height: 2 },
+    elevation:      2,
   },
-  emoji: { fontSize: 28 },
-  label: { fontSize: 13, fontWeight: '700', color: Colors.ink, textAlign: 'center' },
+  iconWrap: {
+    width:          52,
+    height:         52,
+    borderRadius:   16,
+    alignItems:     'center',
+    justifyContent: 'center',
+  },
+  label: { ...type.label, color: Colors.ink, textAlign: 'center' },
 });
