@@ -1,129 +1,273 @@
-import React from 'react';
+/**
+ * History — runs this driver has closed.
+ *
+ * Deliberately read-only. A driver can't reopen a delivered run, and the API
+ * has no transition out of DELIVERED for them, so offering an action here would
+ * be a button that always fails.
+ *
+ * The counters at the top are the numbers a driver actually gets asked about at
+ * the end of a week: how many completed, how many failed, and how much cash
+ * they were responsible for collecting.
+ */
+
+import React, { useMemo, useState } from 'react';
+import { View, RefreshControl } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { useRouter } from 'expo-router';
+import { useInfiniteQuery } from '@tanstack/react-query';
+import Animated, {
+  FadeInDown, useSharedValue, useAnimatedScrollHandler,
+} from 'react-native-reanimated';
+
 import {
-  FlatList,
-  RefreshControl,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useQuery } from '@tanstack/react-query';
-import { Colors } from '@/constants/colors';
-import { RowSkeleton } from '@/components/ui/Skeleton';
-import { EmptyState } from '@/components/ui/EmptyState';
-import { StatusBadge } from '@/components/ui/Badge';
-import { formatDate, formatNaira } from '@/lib/format';
-import { api } from '@/lib/api-client';
+  Text, Pressable, Icon, Surface, StatusBadge, EmptyState, RowSkeleton,
+} from '@/components/ui';
+import { ScreenHeader } from '@/components/shared/ScreenHeader';
+import { StatTile } from '@/components/admin/StatTile';
+import { color, space, radius, gutter, layout } from '@/constants/theme';
+import { formatNaira, formatDate } from '@/lib/format';
+import {
+  listMyDeliveries, SETTLED, type DriverDelivery, type DeliveryStatus,
+} from '@/lib/services/driver.service';
 
-interface Delivery {
-  id:            number;
-  tracking_code: string;
-  status:        string;
-  delivered_at:  string | null;
-  order: {
-    order_number:   string;
-    total:          number;
-    delivery_city:  string;
-    delivery_state: string;
-    customer: {
-      first_name: string;
-      last_name:  string;
-    } | null;
-  } | null;
-}
+type Filter = 'all' | 'DELIVERED' | 'FAILED';
 
-interface DeliveriesResponse {
-  records:    Delivery[];
-  pagination: { total: number };
-}
+const FILTERS: { value: Filter; label: string }[] = [
+  { value: 'all',       label: 'All' },
+  { value: 'DELIVERED', label: 'Delivered' },
+  { value: 'FAILED',    label: 'Failed' },
+];
 
-export default function DriverHistory() {
-  const insets = useSafeAreaInsets();
+export default function DriverHistoryScreen() {
+  const router = useRouter();
+  const [filter, setFilter] = useState<Filter>('all');
 
-  const { data, isLoading, isError, refetch, isRefetching } = useQuery({
-    queryKey:        ['driver-history'],
-    queryFn:         () => api.get<DeliveriesResponse>('/api/deliveries?status=DELIVERED'),
-    refetchInterval: 60_000,
+  const scrollY = useSharedValue(0);
+  const onScroll = useAnimatedScrollHandler({
+    onScroll: e => { scrollY.value = e.contentOffset.y; },
   });
 
-  const deliveries = data?.records ?? [];
+  const deliveriesQ = useInfiniteQuery({
+    queryKey: ['deliveries', 'mine', 'history'],
+    queryFn:  ({ pageParam = 1 }) => listMyDeliveries({ page: pageParam as number, limit: 20 }),
+    initialPageParam: 1,
+    getNextPageParam: last => {
+      const { current_page, total_pages } = last.pagination;
+      return current_page < total_pages ? current_page + 1 : undefined;
+    },
+    staleTime: 60_000,
+  });
+
+  // Closed runs only — the live ones belong on Today.
+  const settled = useMemo(
+    () => (deliveriesQ.data?.pages.flatMap(p => p.records) ?? [])
+      .filter(d => SETTLED.includes(d.status)),
+    [deliveriesQ.data],
+  );
+
+  const shown = useMemo(
+    () => (filter === 'all' ? settled : settled.filter(d => d.status === filter)),
+    [settled, filter],
+  );
+
+  const stats = useMemo(() => {
+    const delivered = settled.filter(d => d.status === 'DELIVERED');
+    return {
+      delivered: delivered.length,
+      failed:    settled.filter(d => d.status === 'FAILED' || d.status === 'RETURNED').length,
+      value:     delivered.reduce((s, d) => s + (d.order?.total ?? 0), 0),
+    };
+  }, [settled]);
 
   return (
-    <View style={[styles.root, { paddingTop: insets.top }]}>
-      <View style={styles.header}>
-        <Text style={styles.heading}>Delivery History</Text>
-        {!isLoading && <Text style={styles.count}>{deliveries.length} deliveries</Text>}
-      </View>
-
-      {isLoading ? (
-        <View style={styles.skeletons}>
-          {Array.from({ length: 6 }).map((_, i) => <RowSkeleton key={i} />)}
-        </View>
-      ) : isError ? (
-        <EmptyState icon="⚠️" title="Couldn't load history" actionLabel="Retry" onAction={() => refetch()} />
-      ) : deliveries.length === 0 ? (
-        <EmptyState
-          icon="📋"
-          title="No completed deliveries"
-          subtitle="Your completed deliveries will appear here."
+    <View style={{ flex: 1, backgroundColor: color.bg }}>
+      <SafeAreaView style={{ flex: 1 }} edges={['top']}>
+        <ScreenHeader
+          title="History"
+          subtitle={settled.length > 0 ? `${settled.length} closed runs` : undefined}
+          scrollY={scrollY}
         />
-      ) : (
-        <FlatList
-          data={deliveries}
-          keyExtractor={d => String(d.id)}
-          contentContainerStyle={styles.list}
-          refreshControl={<RefreshControl refreshing={isRefetching} onRefresh={refetch} tintColor={Colors.brand} />}
-          renderItem={({ item }) => {
-            const customer = item.order?.customer;
-            return (
-              <View style={styles.card}>
-                <View style={styles.cardTop}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.orderNum}>{item.order?.order_number ?? `DEL-${item.id}`}</Text>
-                    {customer && (
-                      <Text style={styles.customerName}>
-                        {customer.first_name} {customer.last_name}
-                      </Text>
-                    )}
-                  </View>
-                  <StatusBadge status={item.status} type="delivery" />
-                </View>
 
-                <View style={styles.meta}>
-                  <Text style={styles.location}>
-                    📍 {item.order?.delivery_city}, {item.order?.delivery_state}
+        <View style={{ paddingHorizontal: gutter, gap: space.md, paddingBottom: space.md }}>
+          <View style={{ flexDirection: 'row', gap: space.md }}>
+            <StatTile
+              index={0}
+              icon="check-circle"
+              label="Delivered"
+              value={String(stats.delivered)}
+              hint="Completed runs"
+              loading={deliveriesQ.isLoading}
+            />
+            <StatTile
+              index={1}
+              icon="money"
+              label="Value delivered"
+              value={formatNaira(stats.value)}
+              hint="Goods handed over"
+              loading={deliveriesQ.isLoading}
+            />
+          </View>
+
+          <View style={{ flexDirection: 'row', gap: space.sm }}>
+            {FILTERS.map(f => {
+              const active = filter === f.value;
+              const count = f.value === 'all' ? settled.length
+                : f.value === 'DELIVERED' ? stats.delivered
+                : stats.failed;
+              return (
+                <Pressable
+                  key={f.value}
+                  onPress={() => setFilter(f.value)}
+                  haptic="light"
+                  pressScale={0.95}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: active }}
+                  style={{
+                    flex: 1, height: 34,
+                    flexDirection: 'row', alignItems: 'center',
+                    justifyContent: 'center', gap: 5,
+                    borderRadius: radius.full,
+                    backgroundColor: active ? color.text : color.surface,
+                    borderWidth: layout.hairlineWidth,
+                    borderColor: active ? color.text : color.border,
+                  }}
+                >
+                  <Text variant="caption" style={{
+                    color: active ? '#fff' : color.textSecondary,
+                    fontWeight: active ? '700' : '500',
+                  }}>
+                    {f.label}
                   </Text>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                    {item.order?.total ? (
-                      <Text style={styles.amount}>{formatNaira(item.order.total)}</Text>
-                    ) : null}
-                    {item.delivered_at && (
-                      <Text style={styles.date}>{formatDate(item.delivered_at)}</Text>
-                    )}
-                  </View>
-                </View>
-              </View>
-            );
+                  {count > 0 ? (
+                    <Text variant="caption" style={{
+                      fontSize: 10, fontWeight: '700',
+                      color: active ? 'rgba(255,255,255,0.7)' : color.textTertiary,
+                    }}>
+                      {count}
+                    </Text>
+                  ) : null}
+                </Pressable>
+              );
+            })}
+          </View>
+        </View>
+
+        <Animated.FlatList
+          data={shown}
+          keyExtractor={d => String(d.id)}
+          onScroll={onScroll}
+          scrollEventThrottle={16}
+          contentContainerStyle={{
+            paddingHorizontal: gutter,
+            paddingBottom: layout.tabBarHeight + space.xl,
+            gap: space.sm,
           }}
+          showsVerticalScrollIndicator={false}
+          onEndReached={() => {
+            if (deliveriesQ.hasNextPage && !deliveriesQ.isFetchingNextPage) {
+              void deliveriesQ.fetchNextPage();
+            }
+          }}
+          onEndReachedThreshold={0.5}
+          refreshControl={
+            <RefreshControl
+              refreshing={deliveriesQ.isRefetching && !deliveriesQ.isFetchingNextPage}
+              onRefresh={() => void deliveriesQ.refetch()}
+              tintColor={color.brand}
+            />
+          }
+          renderItem={({ item, index }) => (
+            <HistoryRow
+              delivery={item}
+              index={index}
+              onPress={() => router.push(`/(driver)/deliveries/${item.id}` as never)}
+            />
+          )}
+          ListEmptyComponent={
+            deliveriesQ.isLoading ? (
+              <View style={{ gap: space.sm }}>
+                {Array.from({ length: 5 }).map((_, i) => <RowSkeleton key={i} />)}
+              </View>
+            ) : deliveriesQ.isError ? (
+              <EmptyState
+                iconName="alert"
+                tone="danger"
+                title="Couldn’t load your history"
+                actionLabel="Retry"
+                onAction={() => void deliveriesQ.refetch()}
+              />
+            ) : settled.length > 0 ? (
+              <EmptyState
+                iconName="filter"
+                compact
+                title="Nothing here"
+                subtitle="No runs match this filter."
+                actionLabel="Show all"
+                onAction={() => setFilter('all')}
+              />
+            ) : (
+              <EmptyState
+                iconName="clipboard"
+                title="No completed runs yet"
+                subtitle="Deliveries appear here once you close them."
+                actionLabel="See today’s runs"
+                onAction={() => router.push('/(driver)/deliveries' as never)}
+              />
+            )
+          }
+          ListFooterComponent={deliveriesQ.isFetchingNextPage ? <RowSkeleton /> : null}
         />
-      )}
+      </SafeAreaView>
     </View>
   );
 }
 
-const styles = StyleSheet.create({
-  root:     { flex: 1, backgroundColor: Colors.bg },
-  header:   { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingVertical: 16, backgroundColor: Colors.white, borderBottomWidth: 1, borderBottomColor: Colors.line },
-  heading:  { fontSize: 20, fontWeight: '800', color: Colors.ink },
-  count:    { fontSize: 13, color: Colors.ink3 },
-  skeletons:{ padding: 16, gap: 4 },
-  list:     { padding: 16, gap: 10 },
-  card:     { backgroundColor: Colors.white, borderRadius: 14, padding: 14, gap: 8, shadowColor: '#000', shadowOpacity: 0.04, shadowRadius: 6, elevation: 1 },
-  cardTop:  { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 },
-  orderNum: { fontSize: 14, fontWeight: '800', color: Colors.ink },
-  customerName: { fontSize: 13, color: Colors.ink3, marginTop: 2 },
-  meta:     { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  location: { fontSize: 13, color: Colors.ink3 },
-  amount:   { fontSize: 14, fontWeight: '700', color: Colors.ink },
-  date:     { fontSize: 12, color: Colors.ink4 },
-});
+function HistoryRow({ delivery, index, onPress }: {
+  delivery: DriverDelivery; index: number; onPress: () => void;
+}) {
+  const order    = delivery.order;
+  const customer = order?.customer;
+  const name = customer
+    ? (customer.company_name ?? `${customer.first_name} ${customer.last_name}`.trim())
+    : 'Unknown pharmacy';
+
+  const closedAt = delivery.delivered_at ?? delivery.updated_at;
+  const ok = delivery.status === 'DELIVERED';
+
+  return (
+    <Animated.View entering={FadeInDown.delay(Math.min(index, 8) * 35).duration(300)}>
+      <Pressable onPress={onPress} haptic="light" pressScale={0.985}>
+        <Surface level="sm" padded="md" rounded="lg">
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.md }}>
+            <View style={{
+              width: 34, height: 34, borderRadius: radius.full,
+              backgroundColor: ok ? color.successSoft : color.dangerSoft,
+              alignItems: 'center', justifyContent: 'center',
+            }}>
+              <Icon
+                name={ok ? 'check' : 'alert'}
+                size={15}
+                color={ok ? color.success : color.danger}
+                filled
+              />
+            </View>
+
+            <View style={{ flex: 1, gap: 2 }}>
+              <Text variant="bodyMedium" numberOfLines={1}>{name}</Text>
+              <Text variant="caption" tone="tertiary" numberOfLines={1}>
+                {order?.order_number ?? delivery.tracking_code} · {formatDate(closedAt)}
+              </Text>
+              <View style={{ marginTop: 2 }}>
+                <StatusBadge status={delivery.status} kind="delivery" size="sm" />
+              </View>
+            </View>
+
+            <Text variant="bodyMedium" tone={ok ? 'default' : 'disabled'}>
+              {formatNaira(order?.total ?? 0)}
+            </Text>
+          </View>
+        </Surface>
+      </Pressable>
+    </Animated.View>
+  );
+}

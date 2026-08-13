@@ -1,91 +1,77 @@
 /**
- * Skeleton loader — animated shimmer using Reanimated.
- * Drop-in replacement for any placeholder shape.
+ * Skeleton — shimmer placeholder.
+ *
+ * A looping opacity pulse rather than a sliding gradient: it costs one
+ * animated value instead of a masked gradient per row, which matters on long
+ * lists, and it reads as calmer.
  */
 
 import React, { useEffect } from 'react';
-import { StyleSheet, View, type ViewStyle } from 'react-native';
+import { type DimensionValue, type StyleProp, type ViewStyle } from 'react-native';
 import Animated, {
-  useAnimatedStyle,
-  useSharedValue,
-  withRepeat,
-  withTiming,
-  interpolate,
+  useAnimatedStyle, useSharedValue, withRepeat, withSequence, withTiming,
 } from 'react-native-reanimated';
-import { Colors } from '@/constants/colors';
+import { color, radius as radii } from '@/constants/theme';
 
-interface Props {
-  width?:  number | `${number}%`;
+export interface SkeletonProps {
+  width?:  DimensionValue;
   height?: number;
-  radius?: number;
-  style?:  ViewStyle;
+  radius?: keyof typeof radii | number;
+  style?:  StyleProp<ViewStyle>;
 }
 
-export function Skeleton({ width = '100%', height = 16, radius = 8, style }: Props) {
-  const opacity = useSharedValue(1);
+export function Skeleton({ width = '100%', height = 16, radius = 'sm', style }: SkeletonProps) {
+  const pulse = useSharedValue(0.5);
 
   useEffect(() => {
-    opacity.value = withRepeat(
-      withTiming(0.4, { duration: 800 }),
+    pulse.value = withRepeat(
+      withSequence(
+        withTiming(1,   { duration: 700 }),
+        withTiming(0.5, { duration: 700 }),
+      ),
       -1,
-      true,
+      false,
     );
-  }, []);
+  }, [pulse]);
 
-  const animStyle = useAnimatedStyle(() => ({ opacity: opacity.value }));
+  const animated = useAnimatedStyle(() => ({ opacity: pulse.value }));
 
   return (
     <Animated.View
       style={[
-        {
-          width,
-          height,
-          borderRadius: radius,
-          backgroundColor: Colors.bgMuted,
-        },
-        animStyle,
+        { width, height, borderRadius: typeof radius === 'number' ? radius : radii[radius], backgroundColor: color.surfaceMuted },
+        animated,
         style,
       ]}
     />
   );
 }
 
-/** Pre-built skeleton for a product card */
-export function ProductCardSkeleton() {
-  return (
-    <View style={card.wrapper}>
-      <Skeleton height={130} radius={12} style={card.image} />
-      <View style={card.body}>
-        <Skeleton width="50%" height={10} />
-        <Skeleton height={14} style={card.gap} />
-        <Skeleton width="70%" height={10} style={card.gap} />
-        <Skeleton width="40%" height={16} style={{ ...card.gap, marginTop: 8 }} />
-      </View>
-    </View>
-  );
-}
+/* ── Composed skeletons ──────────────────────────────────────────────────── */
 
-/** Pre-built skeleton for a list row */
+import { View } from 'react-native';
+import { space } from '@/constants/theme';
+
+/** One list row: avatar block + two text lines. */
 export function RowSkeleton() {
   return (
-    <View style={row.wrapper}>
-      <Skeleton width={44} height={44} radius={22} />
-      <View style={row.body}>
+    <View style={{ flexDirection: 'row', gap: space.md, paddingVertical: space.md }}>
+      <Skeleton width={44} height={44} radius="md" />
+      <View style={{ flex: 1, gap: space.sm, justifyContent: 'center' }}>
         <Skeleton width="60%" height={13} />
-        <Skeleton width="80%" height={11} style={{ marginTop: 6 }} />
+        <Skeleton width="40%" height={11} />
       </View>
     </View>
   );
 }
 
-const card = StyleSheet.create({
-  wrapper: { borderRadius: 16, overflow: 'hidden', backgroundColor: Colors.white, padding: 0 },
-  image:   { width: '100%', borderRadius: 0 },
-  body:    { padding: 12 },
-  gap:     { marginTop: 6 },
-});
-
-const row = StyleSheet.create({
-  wrapper: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 12 },
-  body:    { flex: 1 },
-});
+/** Catalogue grid tile: image block, title, price. */
+export function ProductCardSkeleton() {
+  return (
+    <View style={{ flex: 1, gap: space.sm }}>
+      <Skeleton width="100%" height={132} radius="lg" />
+      <Skeleton width="80%" height={13} />
+      <Skeleton width="45%" height={12} />
+    </View>
+  );
+}

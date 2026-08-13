@@ -1,312 +1,309 @@
-import React, { useState } from 'react';
+/**
+ * Orders — console.
+ *
+ * Unlike the customer's order list, this one is a work queue. It leads with
+ * search (staff arrive knowing an order number or a pharmacy name) and filters
+ * on the two axes that actually decide what happens next: fulfilment status and
+ * payment status.
+ *
+ * Both filters go to the server rather than being applied client-side. The
+ * customer list can filter locally because a pharmacy has a handful of orders;
+ * the console sees every order on the platform, so filtering a page of 20 would
+ * just hide rows without finding the ones you wanted.
+ */
+
+import React, { useCallback, useMemo, useState } from 'react';
+import { View, RefreshControl } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { useRouter } from 'expo-router';
+import { useInfiniteQuery } from '@tanstack/react-query';
+import Animated, {
+  FadeInDown, useSharedValue, useAnimatedScrollHandler,
+} from 'react-native-reanimated';
+
 import {
-  FlatList,
-  Modal,
-  Pressable,
-  RefreshControl,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from 'react-native';
-import { router } from 'expo-router';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useQuery } from '@tanstack/react-query';
-import { Colors } from '@/constants/colors';
-import { type } from '@/constants/typography';
-import { Icon } from '@/components/ui/Icon';
-import { RowSkeleton } from '@/components/ui/Skeleton';
-import { EmptyState } from '@/components/ui/EmptyState';
-import { StatusBadge } from '@/components/ui/Badge';
+  Text, Input, Pressable, Icon, Surface, Badge, StatusBadge, EmptyState, RowSkeleton,
+} from '@/components/ui';
+import { ScreenHeader } from '@/components/shared/ScreenHeader';
+import { color, space, radius, gutter, layout } from '@/constants/theme';
 import { formatNaira, formatDate } from '@/lib/format';
-import { api } from '@/lib/api-client';
+import { useDebounced } from '@/hooks/use-debounced';
+import {
+  listOrders, type AdminOrder, type OrderStatus, type PaymentStatus,
+} from '@/lib/services/admin.service';
 
-interface Order {
-  id:             number;
-  order_number:   string;
-  status:         string;
-  payment_status: string;
-  total:          number;
-  item_count:     number;
-  created_at:     string;
-  customer: { first_name: string; last_name: string; email: string } | null;
-}
-
-interface OrdersResponse {
-  records:    Order[];
-  pagination: { total: number };
-}
-
-const STATUS_FILTERS = [
-  { value: 'all',         label: 'All' },
-  { value: 'PENDING',     label: 'Pending' },
-  { value: 'CONFIRMED',   label: 'Confirmed' },
-  { value: 'PROCESSING',  label: 'Processing' },
-  { value: 'DISPATCHED',  label: 'Dispatched' },
-  { value: 'DELIVERED',   label: 'Delivered' },
-  { value: 'CANCELLED',   label: 'Cancelled' },
+const STATUSES: { value: OrderStatus | null; label: string }[] = [
+  { value: null,         label: 'All' },
+  { value: 'PENDING',    label: 'Pending' },
+  { value: 'CONFIRMED',  label: 'Confirmed' },
+  { value: 'PROCESSING', label: 'Packing' },
+  { value: 'DISPATCHED', label: 'Dispatched' },
+  { value: 'DELIVERED',  label: 'Delivered' },
+  { value: 'CANCELLED',  label: 'Cancelled' },
 ];
 
-export default function StaffOrders() {
-  const insets   = useSafeAreaInsets();
-  const [filter, setFilter]       = useState('all');
-  const [search, setSearch]       = useState('');
-  const [debSearch, setDebSearch] = useState('');
-  const [showFilter, setShowFilter] = useState(false);
+const PAYMENTS: { value: PaymentStatus | null; label: string }[] = [
+  { value: null,       label: 'Any payment' },
+  { value: 'UNPAID',   label: 'Unpaid' },
+  { value: 'PAID',     label: 'Paid' },
+  { value: 'FAILED',   label: 'Failed' },
+  { value: 'REFUNDED', label: 'Refunded' },
+];
 
-  const timer = React.useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  function handleSearch(t: string) {
-    setSearch(t);
-    clearTimeout(timer.current);
-    timer.current = setTimeout(() => setDebSearch(t), 400);
-  }
+export default function ConsoleOrdersScreen() {
+  const router = useRouter();
 
-  const { data, isLoading, isError, refetch, isRefetching } = useQuery({
-    queryKey: ['staff-orders', filter, debSearch],
-    queryFn: () => {
-      const params = new URLSearchParams();
-      if (filter !== 'all') params.set('status', filter);
-      if (debSearch)        params.set('search', debSearch);
-      const qs = params.toString();
-      return api.get<OrdersResponse>(`/api/orders${qs ? `?${qs}` : ''}`);
-    },
-    refetchInterval: 30_000,
+  const [rawSearch, setRawSearch] = useState('');
+  const [status,    setStatus]    = useState<OrderStatus | null>(null);
+  const [payment,   setPayment]   = useState<PaymentStatus | null>(null);
+
+  const search = useDebounced(rawSearch, 350);
+
+  const scrollY = useSharedValue(0);
+  const onScroll = useAnimatedScrollHandler({
+    onScroll: e => { scrollY.value = e.contentOffset.y; },
   });
 
-  const orders  = data?.records ?? [];
-  const activeFilter = STATUS_FILTERS.find(f => f.value === filter);
+  const ordersQ = useInfiniteQuery({
+    queryKey: ['orders', 'console', search, status, payment],
+    queryFn:  ({ pageParam = 1 }) => listOrders({
+      page: pageParam as number, limit: 20, search, status, payment_status: payment,
+    }),
+    initialPageParam: 1,
+    getNextPageParam: last => {
+      const { current_page, total_pages } = last.pagination;
+      return current_page < total_pages ? current_page + 1 : undefined;
+    },
+    staleTime: 20_000,
+  });
+
+  const orders = useMemo(
+    () => ordersQ.data?.pages.flatMap(p => p.records) ?? [],
+    [ordersQ.data],
+  );
+
+  const total = ordersQ.data?.pages[0]?.pagination.total ?? 0;
+  const filtered = !!search || !!status || !!payment;
+
+  const openOrder = useCallback((id: number) => {
+    router.push(`/(staff)/orders/${id}` as never);
+  }, [router]);
 
   return (
-    <View style={[styles.root, { paddingTop: insets.top }]}>
-      {/* Header */}
-      <View style={styles.header}>
-        <View>
-          <Text style={styles.heading}>All Orders</Text>
-          {!isLoading && (
-            <Text style={styles.count}>{data?.pagination?.total ?? 0} orders</Text>
-          )}
-        </View>
-      </View>
-
-      {/* Search + Filter row */}
-      <View style={styles.toolbar}>
-        <View style={styles.searchBox}>
-          <Icon name="search" size={16} color={Colors.ink4} />
-          <TextInput
-            style={styles.searchInput}
-            placeholder="Search order # or email"
-            placeholderTextColor={Colors.ink4}
-            value={search}
-            onChangeText={handleSearch}
-            autoCapitalize="none"
-          />
-          {search.length > 0 && (
-            <Pressable onPress={() => { setSearch(''); setDebSearch(''); }} hitSlop={8}>
-              <Icon name="close" size={14} color={Colors.ink4} />
+    <View style={{ flex: 1, backgroundColor: color.bg }}>
+      <SafeAreaView style={{ flex: 1 }} edges={['top']}>
+        <ScreenHeader
+          title="Orders"
+          subtitle={total > 0 ? `${total.toLocaleString()} matching` : undefined}
+          scrollY={scrollY}
+          right={
+            <Pressable
+              onPress={() => router.push('/(staff)/orders/new' as never)}
+              haptic="medium"
+              pressScale={0.92}
+              accessibilityRole="button"
+              accessibilityLabel="Place an order for a customer"
+              style={{
+                width: 40, height: 40, borderRadius: radius.full,
+                backgroundColor: color.text,
+                alignItems: 'center', justifyContent: 'center',
+              }}
+            >
+              <Icon name="plus" size={18} color="#fff" />
             </Pressable>
-          )}
+          }
+        />
+
+        <View style={{ paddingHorizontal: gutter, gap: space.md, paddingBottom: space.md }}>
+          <Input
+            placeholder="Order number, pharmacy or contact"
+            value={rawSearch}
+            onChangeText={setRawSearch}
+            autoCapitalize="none"
+            autoCorrect={false}
+            returnKeyType="search"
+            leading={<Icon name="search" size={17} color={color.textTertiary} />}
+            trailing={rawSearch ? <Icon name="close" size={16} color={color.textTertiary} /> : undefined}
+            onTrailingPress={rawSearch ? () => setRawSearch('') : undefined}
+          />
+
+          <Animated.ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={{ gap: space.sm }}
+          >
+            {STATUSES.map(s => (
+              <Chip
+                key={s.label}
+                label={s.label}
+                active={status === s.value}
+                onPress={() => setStatus(s.value)}
+              />
+            ))}
+          </Animated.ScrollView>
+
+          <Animated.ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={{ gap: space.sm }}
+          >
+            {PAYMENTS.map(p => (
+              <Chip
+                key={p.label}
+                label={p.label}
+                active={payment === p.value}
+                tone="soft"
+                onPress={() => setPayment(p.value)}
+              />
+            ))}
+          </Animated.ScrollView>
         </View>
 
-        {/* Filter button */}
-        <Pressable
-          style={[styles.filterBtn, filter !== 'all' && styles.filterBtnActive]}
-          onPress={() => setShowFilter(true)}
-        >
-          <Icon name="filter" size={16} color={filter !== 'all' ? Colors.brand : Colors.ink3} />
-          {filter !== 'all' && (
-            <Text style={styles.filterBtnLabel}>{activeFilter?.label}</Text>
-          )}
-        </Pressable>
-      </View>
-
-      {/* List */}
-      {isLoading ? (
-        <View style={styles.skeletons}>
-          {Array.from({ length: 6 }).map((_, i) => <RowSkeleton key={i} />)}
-        </View>
-      ) : isError ? (
-        <EmptyState
-          iconName="alert"
-          title="Couldn't load orders"
-          actionLabel="Retry"
-          onAction={() => refetch()}
-        />
-      ) : orders.length === 0 ? (
-        <EmptyState
-          iconName="orders"
-          title="No orders found"
-          subtitle={debSearch || filter !== 'all' ? 'Try adjusting your search or filter.' : 'Orders will appear here once placed.'}
-        />
-      ) : (
-        <FlatList
+        <Animated.FlatList
           data={orders}
           keyExtractor={o => String(o.id)}
-          contentContainerStyle={styles.list}
+          onScroll={onScroll}
+          scrollEventThrottle={16}
+          contentContainerStyle={{
+            paddingHorizontal: gutter,
+            paddingBottom: layout.tabBarHeight + space.xl,
+            gap: space.md,
+          }}
+          showsVerticalScrollIndicator={false}
+          onEndReached={() => {
+            if (ordersQ.hasNextPage && !ordersQ.isFetchingNextPage) {
+              void ordersQ.fetchNextPage();
+            }
+          }}
+          onEndReachedThreshold={0.5}
           refreshControl={
-            <RefreshControl refreshing={isRefetching} onRefresh={refetch} tintColor={Colors.brand} />
+            <RefreshControl
+              refreshing={ordersQ.isRefetching && !ordersQ.isFetchingNextPage}
+              onRefresh={() => void ordersQ.refetch()}
+              tintColor={color.brand}
+            />
           }
-          renderItem={({ item }) => (
-            <Pressable
-              style={({ pressed }) => [styles.card, pressed && { opacity: 0.85 }]}
-              onPress={() => router.push(`/(staff)/orders/${item.id}`)}
-            >
-              <View style={styles.cardTop}>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.orderNum}>{item.order_number}</Text>
-                  {item.customer && (
-                    <Text style={styles.customerName}>
-                      {item.customer.first_name} {item.customer.last_name}
-                    </Text>
-                  )}
-                </View>
-                <StatusBadge status={item.status} type="order" />
-              </View>
-              <View style={styles.divider} />
-              <View style={styles.cardBottom}>
-                <View style={styles.meta}>
-                  <Icon name="clock" size={12} color={Colors.ink4} />
-                  <Text style={styles.metaText}>
-                    {formatDate(item.created_at)} · {item.item_count} item{item.item_count !== 1 ? 's' : ''}
-                  </Text>
-                </View>
-                <View style={styles.bottomRight}>
-                  <StatusBadge status={item.payment_status} type="payment" />
-                  <Text style={styles.amount}>{formatNaira(item.total)}</Text>
-                </View>
-              </View>
-            </Pressable>
+          renderItem={({ item, index }) => (
+            <OrderRow order={item} index={index} onPress={() => openOrder(item.id)} />
           )}
+          ListEmptyComponent={
+            ordersQ.isLoading ? (
+              <View style={{ gap: space.md }}>
+                {Array.from({ length: 5 }).map((_, i) => <RowSkeleton key={i} />)}
+              </View>
+            ) : ordersQ.isError ? (
+              <EmptyState
+                iconName="alert"
+                tone="danger"
+                title="Couldn’t load orders"
+                actionLabel="Retry"
+                onAction={() => void ordersQ.refetch()}
+              />
+            ) : filtered ? (
+              <EmptyState
+                iconName="filter"
+                compact
+                title="No orders match"
+                subtitle="Try a different search or clear the filters."
+                actionLabel="Clear filters"
+                onAction={() => { setRawSearch(''); setStatus(null); setPayment(null); }}
+              />
+            ) : (
+              <EmptyState
+                iconName="orders"
+                tone="brand"
+                title="No orders yet"
+                subtitle="Orders placed by customers — or by your team on their behalf — appear here."
+                actionLabel="Place an order"
+                onAction={() => router.push('/(staff)/orders/new' as never)}
+              />
+            )
+          }
+          ListFooterComponent={ordersQ.isFetchingNextPage ? <RowSkeleton /> : null}
         />
-      )}
-
-      {/* Filter modal */}
-      <Modal visible={showFilter} transparent animationType="slide" onRequestClose={() => setShowFilter(false)}>
-        <Pressable style={styles.modalOverlay} onPress={() => setShowFilter(false)} />
-        <View style={[styles.modalSheet, { paddingBottom: insets.bottom + 16 }]}>
-          <View style={styles.modalHandle} />
-          <Text style={styles.modalTitle}>Filter by status</Text>
-          <ScrollView showsVerticalScrollIndicator={false}>
-            {STATUS_FILTERS.map(f => (
-              <Pressable
-                key={f.value}
-                style={[styles.modalOption, filter === f.value && styles.modalOptionActive]}
-                onPress={() => { setFilter(f.value); setShowFilter(false); }}
-              >
-                <Text style={[styles.modalOptionText, filter === f.value && styles.modalOptionTextActive]}>
-                  {f.label}
-                </Text>
-                {filter === f.value && <Icon name="check" size={16} color={Colors.brand} />}
-              </Pressable>
-            ))}
-          </ScrollView>
-        </View>
-      </Modal>
+      </SafeAreaView>
     </View>
   );
 }
 
-const styles = StyleSheet.create({
-  root:    { flex: 1, backgroundColor: Colors.bg },
-  header:  {
-    paddingHorizontal: 20,
-    paddingVertical:   14,
-    backgroundColor:   Colors.white,
-    borderBottomWidth: 0.5,
-    borderBottomColor: Colors.line,
-  },
-  heading: { ...type.h2, color: Colors.ink },
-  count:   { ...type.caption, color: Colors.ink4, marginTop: 2 },
+/* ── Bits ───────────────────────────────────────────────────────────────── */
 
-  toolbar: {
-    flexDirection:   'row',
-    alignItems:      'center',
-    gap:             10,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    backgroundColor: Colors.white,
-    borderBottomWidth: 0.5,
-    borderBottomColor: Colors.line,
-  },
-  searchBox: {
-    flex:              1,
-    flexDirection:     'row',
-    alignItems:        'center',
-    backgroundColor:   Colors.bg,
-    borderRadius:      12,
-    paddingHorizontal: 12,
-    height:            42,
-    gap:               8,
-    borderWidth:       1,
-    borderColor:       Colors.line,
-  },
-  searchInput: {
-    flex:     1,
-    ...type.body,
-    color:    Colors.ink,
-  },
-  filterBtn: {
-    flexDirection:   'row',
-    alignItems:      'center',
-    gap:             6,
-    paddingHorizontal: 14,
-    height:          42,
-    borderRadius:    12,
-    backgroundColor: Colors.bg,
-    borderWidth:     1,
-    borderColor:     Colors.line,
-  },
-  filterBtnActive: {
-    backgroundColor: Colors.brandLight,
-    borderColor:     Colors.brand,
-  },
-  filterBtnLabel: {
-    ...type.btnSm,
-    color: Colors.brand,
-  },
+function Chip({ label, active, onPress, tone = 'solid' }: {
+  label: string; active: boolean; onPress: () => void; tone?: 'solid' | 'soft';
+}) {
+  const activeBg = tone === 'solid' ? color.text : color.brandSoft;
+  const activeFg = tone === 'solid' ? '#fff' : color.brand;
 
-  skeletons: { padding: 16, gap: 8 },
-  list:      { padding: 16, gap: 10, paddingBottom: 32 },
+  return (
+    <Pressable
+      onPress={onPress}
+      haptic="light"
+      pressScale={0.95}
+      accessibilityRole="button"
+      accessibilityState={{ selected: active }}
+      style={{
+        paddingHorizontal: space.md, height: 32,
+        justifyContent: 'center', borderRadius: radius.full,
+        backgroundColor: active ? activeBg : color.surface,
+        borderWidth: layout.hairlineWidth,
+        borderColor: active ? activeBg : color.border,
+      }}
+    >
+      <Text variant="caption" style={{
+        color: active ? activeFg : color.textSecondary,
+        fontWeight: active ? '700' : '500',
+      }}>
+        {label}
+      </Text>
+    </Pressable>
+  );
+}
 
-  card: {
-    backgroundColor: Colors.white,
-    borderRadius:    16,
-    padding:         16,
-    shadowColor:     '#000',
-    shadowOpacity:   0.04,
-    shadowRadius:    8,
-    shadowOffset:    { width: 0, height: 2 },
-    elevation:       1,
-  },
-  cardTop:      { flexDirection: 'row', alignItems: 'flex-start', gap: 10 },
-  orderNum:     { ...type.h4, color: Colors.ink },
-  customerName: { ...type.caption, color: Colors.ink3, marginTop: 3 },
-  divider:      { height: 0.5, backgroundColor: Colors.line, marginVertical: 10 },
-  cardBottom:   { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  meta:         { flexDirection: 'row', alignItems: 'center', gap: 5 },
-  metaText:     { ...type.caption, color: Colors.ink4 },
-  bottomRight:  { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  amount:       { ...type.h4, color: Colors.ink },
+function OrderRow({ order, index, onPress }: {
+  order: AdminOrder; index: number; onPress: () => void;
+}) {
+  const customer = order.customer;
+  const name = customer
+    ? (customer.company_name ?? `${customer.first_name} ${customer.last_name}`.trim())
+    : 'Unknown customer';
 
-  // Modal
-  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.35)' },
-  modalSheet: {
-    backgroundColor:   Colors.white,
-    borderTopLeftRadius:  24,
-    borderTopRightRadius: 24,
-    paddingHorizontal: 24,
-    paddingTop:        16,
-    maxHeight:         '60%',
-  },
-  modalHandle: {
-    width: 36, height: 4, borderRadius: 2,
-    backgroundColor: Colors.line,
-    alignSelf: 'center',
-    marginBottom: 16,
-  },
-  modalTitle:           { ...type.h3, color: Colors.ink, marginBottom: 12 },
-  modalOption:          { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 14, borderBottomWidth: 0.5, borderBottomColor: Colors.line },
-  modalOptionActive:    { },
-  modalOptionText:      { ...type.bodyMed, color: Colors.ink2 },
-  modalOptionTextActive:{ ...type.bodyMed, color: Colors.brand },
-});
+  const showDelivery = !!order.delivery
+    && order.status !== 'CANCELLED'
+    && order.status !== 'DELIVERED';
+
+  return (
+    <Animated.View entering={FadeInDown.delay(Math.min(index, 8) * 40).duration(320)}>
+      <Pressable onPress={onPress} haptic="light" pressScale={0.985}>
+        <Surface level="sm" padded="base" rounded="lg">
+          <View style={{ gap: space.sm }}>
+            <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: space.sm }}>
+              <View style={{ flex: 1, gap: 2 }}>
+                <Text variant="bodyMedium" numberOfLines={1}>{name}</Text>
+                <Text variant="caption" tone="tertiary" numberOfLines={1}>
+                  {order.order_number} · {formatDate(order.created_at)}
+                </Text>
+              </View>
+              <View style={{ alignItems: 'flex-end' }}>
+                <Text variant="headline">{formatNaira(order.total)}</Text>
+                <Text variant="caption" tone="disabled">
+                  {order.item_count} {order.item_count === 1 ? 'line' : 'lines'}
+                </Text>
+              </View>
+            </View>
+
+            <View style={{ flexDirection: 'row', gap: space.sm, flexWrap: 'wrap', alignItems: 'center' }}>
+              <StatusBadge status={order.status} kind="order" size="sm" />
+              <StatusBadge status={order.payment_status} kind="payment" size="sm" />
+              {showDelivery ? (
+                <StatusBadge status={order.delivery!.status} kind="delivery" size="sm" />
+              ) : null}
+              {order.delivery && !order.delivery.driver_id ? (
+                <Badge tone="warning" size="sm">No driver</Badge>
+              ) : null}
+            </View>
+          </View>
+        </Surface>
+      </Pressable>
+    </Animated.View>
+  );
+}

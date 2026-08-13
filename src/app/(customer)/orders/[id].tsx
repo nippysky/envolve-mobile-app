@@ -1,192 +1,392 @@
-import React from 'react';
-import { RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { useLocalSearchParams } from 'expo-router';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+/**
+ * Order detail.
+ *
+ * Ordered by what the customer wants at each point in the order's life:
+ * the timeline first (where is it), then delivery and driver contact, then the
+ * line items and money, then the reference numbers.
+ *
+ * The tracking code copies on tap and the driver's number dials, because those
+ * are the two things anyone ever actually does from this screen. Sharing the
+ * whole order lives in the header, so the code row can stay a single
+ * unambiguous action rather than a menu.
+ *
+ * Polling: an order that's in flight refreshes every 45s while the screen is
+ * open. A settled one doesn't — there's nothing left to change, and polling a
+ * finished order is just battery.
+ */
+
+import React, { useCallback, useMemo } from 'react';
+import { View, ScrollView, RefreshControl, Linking, Share } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { useLocalSearchParams, useRouter } from 'expo-router';
+import { Image } from 'expo-image';
+import * as Clipboard from 'expo-clipboard';
 import { useQuery } from '@tanstack/react-query';
-import { Colors } from '@/constants/colors';
+import Animated, { FadeInDown } from 'react-native-reanimated';
+
+import {
+  Text, Button, Pressable, Icon, Surface, Badge, StatusBadge, Skeleton, EmptyState,
+} from '@/components/ui';
 import { ScreenHeader } from '@/components/shared/ScreenHeader';
-import { StatusBadge } from '@/components/ui/Badge';
-import { Skeleton } from '@/components/ui/Skeleton';
+import { OrderTimeline } from '@/components/orders/OrderTimeline';
+import { color, space, radius, gutter, layout } from '@/constants/theme';
 import { formatNaira, formatDate } from '@/lib/format';
-import { api } from '@/lib/api-client';
-
-interface OrderItem {
-  id:         number;
-  quantity:   number;
-  unit_price: number;
-  subtotal:   number;
-  product: {
-    brand_name:    string;
-    generic_name:  string | null;
-    sku:           string;
-    primary_image: string | null;
-  };
-}
-
-interface OrderDetail {
-  id:               number;
-  order_number:     string;
-  status:           string;
-  payment_status:   string;
-  delivery_address: string;
-  delivery_city:    string;
-  delivery_state:   string;
-  subtotal:         number;
-  delivery_fee:     number;
-  total:            number;
-  notes:            string | null;
-  created_at:       string;
-  items:            OrderItem[];
-  delivery: {
-    tracking_code: string;
-    status:        string;
-    dispatched_at: string | null;
-    delivered_at:  string | null;
-    driver: {
-      first_name: string;
-      last_name:  string;
-      phone:      string | null;
-    } | null;
-  } | null;
-}
+import { getOrder } from '@/lib/services/orders.service';
+import { toast } from '@/lib/toast';
 
 export default function OrderDetailScreen() {
-  const { id }  = useLocalSearchParams<{ id: string }>();
-  const insets  = useSafeAreaInsets();
+  const { id } = useLocalSearchParams<{ id: string }>();
+  const router = useRouter();
 
-  const { data: order, isLoading, refetch, isRefetching } = useQuery({
-    queryKey:        ['customer-order', id],
-    queryFn:         () => api.get<{ order: OrderDetail }>(`/api/orders/${id}`).then(r => r.order),
-    refetchInterval: 30_000,
+  const { data, isLoading, isError, refetch, isRefetching } = useQuery({
+    queryKey: ['orders', 'detail', id],
+    queryFn:  () => getOrder(String(id)),
+    enabled:  !!id,
+    // Keep an in-flight order fresh; leave a settled one alone.
+    refetchInterval: q => {
+      const status = q.state.data?.order.status;
+      return status && status !== 'DELIVERED' && status !== 'CANCELLED' ? 45_000 : false;
+    },
   });
 
-  return (
-    <View style={[styles.root, { paddingBottom: insets.bottom }]}>
-      <ScreenHeader title={order?.order_number ?? `Order #${id}`} back />
+  const order = data?.order;
 
-      <ScrollView
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={styles.content}
-        refreshControl={<RefreshControl refreshing={isRefetching} onRefresh={refetch} tintColor={Colors.brand} />}
-      >
-        {isLoading ? (
-          <View style={{ gap: 16 }}>
-            <Skeleton height={180} radius={16} />
-            <Skeleton height={80} radius={16} />
-            <Skeleton height={140} radius={16} />
+  const copyTracking = useCallback(async (code: string) => {
+    await Clipboard.setStringAsync(code);
+    toast.success('Tracking code copied to your clipboard.');
+  }, []);
+
+  const callDriver = useCallback((phone: string) => {
+    void Linking.openURL(`tel:${phone.replace(/\s/g, '')}`);
+  }, []);
+
+  const shareOrder = useCallback(async () => {
+    if (!order) return;
+    await Share.share({
+      message: order.delivery?.tracking_code
+        ? `Envolve order ${order.order_number} — track it with code ${order.delivery.tracking_code}`
+        : `Envolve order ${order.order_number}`,
+    });
+  }, [order]);
+
+  const itemCount = useMemo(
+    () => order?.items.reduce((s, i) => s + i.quantity, 0) ?? 0,
+    [order],
+  );
+
+  /* ── Loading ── */
+  if (isLoading) {
+    return (
+      <View style={{ flex: 1, backgroundColor: color.bg }}>
+        <SafeAreaView style={{ flex: 1 }} edges={['top']}>
+          <ScreenHeader variant="compact" back title="Order" />
+          <View style={{ padding: gutter, gap: space.base }}>
+            <Skeleton width="100%" height={120} radius="lg" />
+            <Skeleton width="100%" height={220} radius="lg" />
+            <Skeleton width="100%" height={160} radius="lg" />
           </View>
-        ) : order ? (
-          <>
-            {/* Status */}
-            <View style={styles.card}>
-              <InfoRow label="Order Status"><StatusBadge status={order.status} type="order" /></InfoRow>
-              <InfoRow label="Payment"><StatusBadge status={order.payment_status} type="payment" /></InfoRow>
-              {order.delivery && (
-                <InfoRow label="Delivery"><StatusBadge status={order.delivery.status} type="delivery" /></InfoRow>
-              )}
-              <InfoRow label="Placed" value={formatDate(order.created_at)} />
-              <InfoRow label="Deliver to" value={`${order.delivery_address}, ${order.delivery_city}, ${order.delivery_state}`} last />
+        </SafeAreaView>
+      </View>
+    );
+  }
+
+  /* ── Error ── */
+  if (isError || !order) {
+    return (
+      <View style={{ flex: 1, backgroundColor: color.bg }}>
+        <SafeAreaView style={{ flex: 1 }} edges={['top']}>
+          <ScreenHeader variant="compact" back title="Order" />
+          <View style={{ flex: 1, justifyContent: 'center' }}>
+            <EmptyState
+              iconName="alert"
+              tone="danger"
+              title="Couldn’t load this order"
+              subtitle="It may have been removed, or your connection dropped."
+              actionLabel="Try again"
+              onAction={() => void refetch()}
+              secondaryLabel="Back to orders"
+              onSecondary={() => router.replace('/(customer)/orders' as never)}
+            />
+          </View>
+        </SafeAreaView>
+      </View>
+    );
+  }
+
+  const address = [order.delivery_address, order.delivery_city, order.delivery_state]
+    .filter(Boolean).join(', ');
+
+  return (
+    <View style={{ flex: 1, backgroundColor: color.bg }}>
+      <SafeAreaView style={{ flex: 1 }} edges={['top']}>
+        <ScreenHeader
+          variant="compact"
+          back
+          title={order.order_number}
+          subtitle={formatDate(order.created_at)}
+          right={
+            <Pressable
+              onPress={shareOrder}
+              haptic="light"
+              pressScale={0.92}
+              hitSlop={8}
+              accessibilityRole="button"
+              accessibilityLabel="Share order"
+            >
+              <Icon name="share" size={18} color={color.text} />
+            </Pressable>
+          }
+        />
+
+        <ScrollView
+          contentContainerStyle={{ padding: gutter, gap: space.lg, paddingBottom: layout.tabBarHeight + space['2xl'] }}
+          showsVerticalScrollIndicator={false}
+          refreshControl={
+            <RefreshControl
+              refreshing={isRefetching}
+              onRefresh={() => void refetch()}
+              tintColor={color.brand}
+            />
+          }
+        >
+          {/* ── Status ── */}
+          <Animated.View entering={FadeInDown.duration(320)} style={{ gap: space.md }}>
+            <View style={{ flexDirection: 'row', gap: space.sm, flexWrap: 'wrap' }}>
+              <StatusBadge status={order.status} kind="order" />
+              <StatusBadge status={order.payment_status} kind="payment" />
+              {order.delivery ? (
+                <StatusBadge status={order.delivery.status} kind="delivery" />
+              ) : null}
             </View>
 
-            {/* Driver tracking */}
-            {order.delivery?.driver && (
-              <View style={styles.trackCard}>
-                <Text style={styles.trackTitle}>🚴 Out for delivery</Text>
-                <Text style={styles.trackSub}>
-                  Driver: {order.delivery.driver.first_name} {order.delivery.driver.last_name}
-                  {order.delivery.driver.phone ? ` · ${order.delivery.driver.phone}` : ''}
-                </Text>
-                {order.delivery.tracking_code && (
-                  <Text style={styles.trackCode}>Tracking: {order.delivery.tracking_code}</Text>
-                )}
-              </View>
-            )}
+            {order.placed_by ? (
+              <Surface tone="info" level="none" padded="md" rounded="md">
+                <View style={{ flexDirection: 'row', gap: space.sm, alignItems: 'center' }}>
+                  <Icon name="team" size={16} color={color.info} filled />
+                  <Text variant="caption" style={{ flex: 1, color: '#155e75' }}>
+                    Placed for you by {order.placed_by.name} ({order.placed_by.role.toLowerCase()}).
+                  </Text>
+                </View>
+              </Surface>
+            ) : null}
 
-            {/* Items */}
-            <Text style={styles.sectionTitle}>Items</Text>
-            <View style={styles.card}>
-              {order.items.map((item, idx) => (
-                <View key={item.id} style={[styles.itemRow, idx < order.items.length - 1 && styles.itemBorder]}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.itemName}>{item.product.brand_name}</Text>
-                    {item.product.generic_name && (
-                      <Text style={styles.itemSub}>{item.product.generic_name}</Text>
-                    )}
-                    <Text style={styles.itemMeta}>{formatNaira(item.unit_price)} × {item.quantity}</Text>
+            <Surface level="sm" padded="base" rounded="lg">
+              <OrderTimeline
+                status={order.status}
+                deliveryStatus={order.delivery?.status ?? null}
+                placedAt={order.created_at}
+                dispatchedAt={order.delivery?.dispatched_at ?? null}
+                deliveredAt={order.delivery?.delivered_at ?? null}
+              />
+            </Surface>
+          </Animated.View>
+
+          {/* ── Payment outstanding ── */}
+          {order.payment_status === 'UNPAID' && order.status !== 'CANCELLED' ? (
+            <Animated.View entering={FadeInDown.delay(60).duration(320)}>
+              <Surface tone="warning" level="none" padded="base" rounded="lg">
+                <View style={{ flexDirection: 'row', gap: space.sm }}>
+                  <Icon name="clock" size={17} color={color.warning} filled />
+                  <View style={{ flex: 1, gap: 2 }}>
+                    <Text variant="label" style={{ color: '#92400e' }}>Payment outstanding</Text>
+                    <Text variant="caption" style={{ color: '#a16207' }}>
+                      We’ll confirm your order once payment clears. If you’ve already
+                      transferred, our team will update this shortly.
+                    </Text>
                   </View>
-                  <Text style={styles.itemTotal}>{formatNaira(item.subtotal)}</Text>
+                </View>
+              </Surface>
+            </Animated.View>
+          ) : null}
+
+          {/* ── Delivery ── */}
+          <Section title="Delivery" delay={100}>
+            <Surface level="sm" padded="base" rounded="lg">
+              <View style={{ gap: space.md }}>
+                <Row icon="location" label="Address" value={address || 'Not provided'} />
+
+                {order.notes ? <Row icon="document" label="Notes" value={order.notes} /> : null}
+
+                {order.delivery?.tracking_code ? (
+                  <Pressable
+                    onPress={() => void copyTracking(order.delivery!.tracking_code)}
+                    haptic="light"
+                    pressOpacity={0.7}
+                  >
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.md }}>
+                      <Icon name="track" size={16} color={color.textTertiary} />
+                      <View style={{ flex: 1 }}>
+                        <Text variant="caption" tone="tertiary">Tracking code</Text>
+                        <Text variant="mono">{order.delivery.tracking_code}</Text>
+                      </View>
+                      <Icon name="copy" size={16} color={color.brand} />
+                    </View>
+                  </Pressable>
+                ) : null}
+
+                {order.delivery?.driver ? (
+                  <View style={{
+                    flexDirection: 'row', alignItems: 'center', gap: space.md,
+                    paddingTop: space.md,
+                    borderTopWidth: layout.hairlineWidth,
+                    borderTopColor: color.borderSubtle,
+                  }}>
+                    <View style={{
+                      width: 38, height: 38, borderRadius: radius.full,
+                      backgroundColor: color.accentSoft,
+                      alignItems: 'center', justifyContent: 'center',
+                    }}>
+                      <Icon name="truck" size={17} color={color.accent} filled />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text variant="caption" tone="tertiary">Your driver</Text>
+                      <Text variant="bodyMedium">{order.delivery.driver.name}</Text>
+                    </View>
+                    {order.delivery.driver.phone ? (
+                      <Button
+                        size="sm"
+                        variant="tinted"
+                        onPress={() => callDriver(order.delivery!.driver!.phone!)}
+                        icon={<Icon name="phone" size={14} color={color.brand} />}
+                      >
+                        Call
+                      </Button>
+                    ) : null}
+                  </View>
+                ) : null}
+              </View>
+            </Surface>
+          </Section>
+
+          {/* ── Items ── */}
+          <Section title={`Items (${itemCount})`} delay={140}>
+            <Surface level="sm" padded="none" rounded="lg">
+              {order.items.map((item, i) => (
+                <View
+                  key={item.id}
+                  style={{
+                    flexDirection: 'row', gap: space.md,
+                    padding: space.base,
+                    borderBottomWidth: i === order.items.length - 1 ? 0 : layout.hairlineWidth,
+                    borderBottomColor: color.borderSubtle,
+                  }}
+                >
+                  <View style={{
+                    width: 52, height: 52,
+                    borderRadius: radius.md,
+                    backgroundColor: color.surfaceSubtle,
+                    alignItems: 'center', justifyContent: 'center',
+                    overflow: 'hidden',
+                  }}>
+                    {item.product.primary_image ? (
+                      <Image
+                        source={{ uri: item.product.primary_image }}
+                        style={{ width: '76%', height: '76%' }}
+                        contentFit="contain"
+                        transition={180}
+                        cachePolicy="memory-disk"
+                      />
+                    ) : (
+                      <Icon name="product" size={20} color={color.textDisabled} />
+                    )}
+                  </View>
+
+                  <View style={{ flex: 1, gap: 2 }}>
+                    <Text variant="bodyMedium" numberOfLines={2}>{item.product.brand_name}</Text>
+                    <Text variant="caption" tone="tertiary" numberOfLines={1}>
+                      {[item.product.generic_name, item.product.product_strength, item.product.pack_size]
+                        .filter(Boolean).join(' · ') || item.product.sku}
+                    </Text>
+                    <Text variant="caption" tone="disabled">
+                      {item.quantity} × {formatNaira(item.unit_price)}
+                    </Text>
+                  </View>
+
+                  <Text variant="bodyMedium">{formatNaira(item.subtotal)}</Text>
                 </View>
               ))}
-            </View>
+            </Surface>
+          </Section>
 
-            {/* Totals */}
-            <View style={styles.totalsCard}>
-              <TotalRow label="Subtotal"     value={formatNaira(order.subtotal)} />
-              <TotalRow label="Delivery fee" value={formatNaira(order.delivery_fee)} />
-              <View style={styles.grandRow}>
-                <Text style={styles.grandLabel}>Total</Text>
-                <Text style={styles.grandValue}>{formatNaira(order.total)}</Text>
+          {/* ── Totals ── */}
+          <Section title="Payment" delay={180}>
+            <Surface level="sm" padded="base" rounded="lg">
+              <View style={{ gap: space.sm }}>
+                <Total label="Subtotal" value={formatNaira(order.subtotal)} />
+                {order.discount > 0 ? (
+                  <Total label="Discount" value={`− ${formatNaira(order.discount)}`} tone="success" />
+                ) : null}
+                <Total label="Delivery" value={formatNaira(order.delivery_fee)} />
+
+                <View style={{
+                  height: layout.hairlineWidth,
+                  backgroundColor: color.borderSubtle,
+                  marginVertical: space.xs,
+                }} />
+
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline' }}>
+                  <Text variant="bodyMedium">Total</Text>
+                  <Text variant="title3">{formatNaira(order.total)}</Text>
+                </View>
+
+                {order.payment_reference ? (
+                  <View style={{ marginTop: space.sm }}>
+                    <Text variant="caption" tone="tertiary">Payment reference</Text>
+                    <Text variant="mono" tone="secondary">{order.payment_reference}</Text>
+                  </View>
+                ) : null}
               </View>
-            </View>
+            </Surface>
+          </Section>
 
-            {order.notes && (
-              <View style={[styles.card, { padding: 14 }]}>
-                <Text style={{ fontSize: 12, color: Colors.ink3, marginBottom: 4 }}>Delivery Notes</Text>
-                <Text style={{ fontSize: 14, color: Colors.ink2, lineHeight: 21 }}>{order.notes}</Text>
-              </View>
-            )}
-          </>
-        ) : null}
-      </ScrollView>
+          <Button
+            variant="secondary"
+            fullWidth
+            onPress={() => router.push('/(customer)/catalog' as never)}
+            icon={<Icon name="shop" size={16} color={color.text} />}
+          >
+            Order these again
+          </Button>
+        </ScrollView>
+      </SafeAreaView>
     </View>
   );
 }
 
-function TotalRow({ label, value }: { label: string; value: string }) {
+/* ── Bits ───────────────────────────────────────────────────────────────── */
+
+function Section({ title, delay, children }: {
+  title: string; delay: number; children: React.ReactNode;
+}) {
   return (
-    <View style={styles.totalRow}>
-      <Text style={styles.totalLabel}>{label}</Text>
-      <Text style={styles.totalValue}>{value}</Text>
-    </View>
+    <Animated.View entering={FadeInDown.delay(delay).duration(320)} style={{ gap: space.sm }}>
+      <Text variant="overline" tone="tertiary">{title}</Text>
+      {children}
+    </Animated.View>
   );
 }
 
-function InfoRow({ label, value, children, last }: { label: string; value?: string; children?: React.ReactNode; last?: boolean }) {
+function Row({ icon, label, value }: {
+  icon: 'location' | 'document'; label: string; value: string;
+}) {
   return (
-    <View style={[ir.wrap, !last && ir.border]}>
-      <Text style={ir.label}>{label}</Text>
-      {children ?? <Text style={ir.value}>{value}</Text>}
+    <View style={{ flexDirection: 'row', gap: space.md }}>
+      <Icon name={icon} size={16} color={color.textTertiary} />
+      <View style={{ flex: 1 }}>
+        <Text variant="caption" tone="tertiary">{label}</Text>
+        <Text variant="callout">{value}</Text>
+      </View>
     </View>
   );
 }
 
-const styles = StyleSheet.create({
-  root:        { flex: 1, backgroundColor: Colors.bg },
-  content:     { padding: 16, gap: 12 },
-  sectionTitle:{ fontSize: 15, fontWeight: '700', color: Colors.ink, marginTop: 4 },
-  card:        { backgroundColor: Colors.white, borderRadius: 16, overflow: 'hidden', shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 8, elevation: 2 },
-  trackCard:   { backgroundColor: Colors.teal + '15', borderRadius: 14, padding: 16, borderLeftWidth: 4, borderLeftColor: Colors.teal, gap: 4 },
-  trackTitle:  { fontSize: 15, fontWeight: '700', color: Colors.teal },
-  trackSub:    { fontSize: 13, color: Colors.ink2 },
-  trackCode:   { fontSize: 12, color: Colors.ink3, marginTop: 2 },
-  itemRow:     { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 13, gap: 8 },
-  itemBorder:  { borderBottomWidth: 1, borderBottomColor: Colors.line },
-  itemName:    { fontSize: 14, fontWeight: '600', color: Colors.ink },
-  itemSub:     { fontSize: 12, color: Colors.ink4 },
-  itemMeta:    { fontSize: 12, color: Colors.ink4, marginTop: 2 },
-  itemTotal:   { fontSize: 14, fontWeight: '700', color: Colors.ink },
-  totalsCard:  { backgroundColor: Colors.white, borderRadius: 16, padding: 16, gap: 10, shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 8, elevation: 2 },
-  totalRow:    { flexDirection: 'row', justifyContent: 'space-between' },
-  totalLabel:  { fontSize: 14, color: Colors.ink3 },
-  totalValue:  { fontSize: 14, color: Colors.ink },
-  grandRow:    { flexDirection: 'row', justifyContent: 'space-between', paddingTop: 10, borderTopWidth: 1, borderTopColor: Colors.line },
-  grandLabel:  { fontSize: 16, fontWeight: '700', color: Colors.ink },
-  grandValue:  { fontSize: 20, fontWeight: '800', color: Colors.brand },
-});
-
-const ir = StyleSheet.create({
-  wrap:   { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 13 },
-  border: { borderBottomWidth: 1, borderBottomColor: Colors.line },
-  label:  { fontSize: 13, color: Colors.ink3, flex: 1 },
-  value:  { fontSize: 14, fontWeight: '600', color: Colors.ink, maxWidth: '55%', textAlign: 'right' },
-});
+function Total({ label, value, tone }: {
+  label: string; value: string; tone?: 'success';
+}) {
+  return (
+    <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+      <Text variant="callout" tone="tertiary">{label}</Text>
+      <Text variant="callout" tone={tone ?? 'default'}>{value}</Text>
+    </View>
+  );
+}

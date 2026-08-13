@@ -1,262 +1,317 @@
 /**
- * Team Management — list all STAFF and DRIVER users.
- * Admin-only (ADMIN / SUPER_ADMIN roles).
- * GET /api/staff
+ * Team — staff and drivers.
+ *
+ * One endpoint serves both roles, so this screen splits them by tab rather than
+ * mixing them: a sales rep and a driver share almost no relevant attributes.
+ * Reps carry an account load; drivers carry a vehicle.
+ *
+ * The "unverified" flag matters more than it looks. A staff member who never
+ * completed their email verification can't sign in, and from the admin's side
+ * they look identical to an active member until you check. Resending the
+ * invite is therefore the primary action on those rows.
  */
 
-import React, { useState } from 'react';
-import {
-  FlatList,
-  Modal,
-  Pressable,
-  RefreshControl,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from 'react-native';
-import { router } from 'expo-router';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import React, { useCallback, useMemo, useState } from 'react';
+import { View, RefreshControl, Linking } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { useRouter } from 'expo-router';
 import { useQuery } from '@tanstack/react-query';
-import { Colors } from '@/constants/colors';
-import { type } from '@/constants/typography';
-import { Icon } from '@/components/ui/Icon';
-import { RowSkeleton } from '@/components/ui/Skeleton';
-import { EmptyState } from '@/components/ui/EmptyState';
+import Animated, {
+  FadeInDown, useSharedValue, useAnimatedScrollHandler,
+} from 'react-native-reanimated';
+
+import {
+  Text, Button, Input, Pressable, Icon, Surface, Badge, EmptyState, RowSkeleton,
+} from '@/components/ui';
+import { ScreenHeader } from '@/components/shared/ScreenHeader';
+import { color, space, radius, gutter, layout } from '@/constants/theme';
 import { formatDate } from '@/lib/format';
-import { api } from '@/lib/api-client';
+import { useDebounced } from '@/hooks/use-debounced';
+import {
+  listStaff, resendStaffInvite, type StaffMember, type StaffRole,
+} from '@/lib/services/admin.service';
+import { toast } from '@/lib/toast';
 
-interface StaffMember {
-  id:         number;
-  first_name: string;
-  last_name:  string;
-  email:      string;
-  phone:      string | null;
-  role:       string;
-  status:     string;
-  created_at: string;
-  avatar_url: string | null;
-}
-
-interface StaffResponse {
-  records:    StaffMember[];
-  pagination: { total: number };
-}
-
-const ROLE_FILTERS = [
-  { value: 'all',    label: 'All' },
-  { value: 'STAFF',  label: 'Staff' },
+const TABS: { value: StaffRole; label: string }[] = [
+  { value: 'STAFF',  label: 'Sales & admin' },
   { value: 'DRIVER', label: 'Drivers' },
 ];
 
-const ROLE_COLORS: Record<string, string> = {
-  ADMIN:      Colors.teal,
-  STAFF:      Colors.brand,
-  DRIVER:     Colors.warning,
-  SUPER_ADMIN: Colors.danger,
-};
+export default function TeamScreen() {
+  const router = useRouter();
 
-export default function TeamManagement() {
-  const insets = useSafeAreaInsets();
-  const [search, setSearch]       = useState('');
-  const [debSearch, setDebSearch] = useState('');
-  const [roleFilter, setRoleFilter] = useState('all');
-  const [showFilter, setShowFilter] = useState(false);
+  const [role,      setRole]      = useState<StaffRole>('STAFF');
+  const [rawSearch, setRawSearch] = useState('');
+  const [busyId,    setBusyId]    = useState<number | null>(null);
 
-  const timer = React.useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  function handleSearch(t: string) {
-    setSearch(t);
-    clearTimeout(timer.current);
-    timer.current = setTimeout(() => setDebSearch(t), 400);
-  }
+  const search = useDebounced(rawSearch, 350);
 
-  const { data, isLoading, isError, refetch, isRefetching } = useQuery({
-    queryKey: ['staff-team', debSearch, roleFilter],
-    queryFn: () => {
-      const params = new URLSearchParams();
-      if (debSearch)            params.set('search', debSearch);
-      if (roleFilter !== 'all') params.set('role', roleFilter);
-      const qs = params.toString();
-      return api.get<StaffResponse>(`/api/staff${qs ? `?${qs}` : ''}`);
-    },
+  const scrollY = useSharedValue(0);
+  const onScroll = useAnimatedScrollHandler({
+    onScroll: e => { scrollY.value = e.contentOffset.y; },
   });
 
-  const members = data?.records ?? [];
-  const activeFilter = ROLE_FILTERS.find(f => f.value === roleFilter);
+  /**
+   * Admins are STAFF-role users too, so the "Sales & admin" tab queries without
+   * a role filter and partitions client-side. Filtering server-side by
+   * `role: 'STAFF'` would hide every admin from the team list, including the
+   * person looking at it.
+   */
+  const teamQ = useQuery({
+    queryKey: ['staff', 'team', search],
+    queryFn:  () => listStaff({ search, limit: 100 }),
+    staleTime: 60_000,
+  });
+
+  const members = useMemo(() => {
+    const all = teamQ.data?.records ?? [];
+    return role === 'DRIVER'
+      ? all.filter(m => m.role === 'DRIVER')
+      : all.filter(m => m.role !== 'DRIVER');
+  }, [teamQ.data, role]);
+
+  const resend = useCallback(async (member: StaffMember) => {
+    setBusyId(member.id);
+    try {
+      await resendStaffInvite(member.id);
+      toast.success(`Invite resent to ${member.email}.`);
+    } catch (err) {
+      toast.error((err as Error).message, 'Could not resend');
+    } finally {
+      setBusyId(null);
+    }
+  }, []);
 
   return (
-    <View style={[styles.root, { paddingTop: insets.top }]}>
-      {/* Header */}
-      <View style={styles.header}>
-        <View>
-          <Text style={styles.heading}>Team</Text>
-          {!isLoading && (
-            <Text style={styles.count}>{data?.pagination?.total ?? 0} members</Text>
-          )}
-        </View>
-        <Pressable style={styles.addBtn} onPress={() => router.push('/(staff)/team/new')}>
-          <Icon name="plus" size={18} color={Colors.white} />
-        </Pressable>
-      </View>
-
-      {/* Search + filter */}
-      <View style={styles.toolbar}>
-        <View style={styles.searchBox}>
-          <Icon name="search" size={16} color={Colors.ink4} />
-          <TextInput
-            style={styles.searchInput}
-            placeholder="Search by name or email"
-            placeholderTextColor={Colors.ink4}
-            value={search}
-            onChangeText={handleSearch}
-            autoCapitalize="none"
-          />
-          {search.length > 0 && (
-            <Pressable onPress={() => { setSearch(''); setDebSearch(''); }} hitSlop={8}>
-              <Icon name="close" size={14} color={Colors.ink4} />
+    <View style={{ flex: 1, backgroundColor: color.bg }}>
+      <SafeAreaView style={{ flex: 1 }} edges={['top']}>
+        <ScreenHeader
+          variant="compact"
+          back
+          title="Team"
+          right={
+            <Pressable
+              onPress={() => router.push('/(staff)/team/new' as never)}
+              haptic="medium"
+              pressScale={0.92}
+              hitSlop={8}
+              accessibilityRole="button"
+              accessibilityLabel="Add a team member"
+            >
+              <Icon name="user-plus" size={19} color={color.text} />
             </Pressable>
-          )}
-        </View>
-        <Pressable
-          style={[styles.filterBtn, roleFilter !== 'all' && styles.filterBtnActive]}
-          onPress={() => setShowFilter(true)}
-        >
-          <Icon name="filter" size={16} color={roleFilter !== 'all' ? Colors.brand : Colors.ink3} />
-          {roleFilter !== 'all' && (
-            <Text style={styles.filterBtnLabel}>{activeFilter?.label}</Text>
-          )}
-        </Pressable>
-      </View>
+          }
+        />
 
-      {/* List */}
-      {isLoading ? (
-        <View style={styles.skeletons}>
-          {Array.from({ length: 6 }).map((_, i) => <RowSkeleton key={i} />)}
+        <View style={{ paddingHorizontal: gutter, gap: space.md, paddingBottom: space.md }}>
+          <View style={{
+            flexDirection: 'row',
+            backgroundColor: color.surfaceMuted,
+            borderRadius: radius.full,
+            padding: 3,
+          }}>
+            {TABS.map(t => {
+              const active = role === t.value;
+              return (
+                <Pressable
+                  key={t.value}
+                  onPress={() => setRole(t.value)}
+                  haptic="light"
+                  pressScale={0.98}
+                  accessibilityRole="tab"
+                  accessibilityState={{ selected: active }}
+                  style={{
+                    flex: 1, height: 34,
+                    alignItems: 'center', justifyContent: 'center',
+                    borderRadius: radius.full,
+                    backgroundColor: active ? color.surface : 'transparent',
+                  }}
+                >
+                  <Text variant="caption" style={{
+                    color: active ? color.text : color.textTertiary,
+                    fontWeight: active ? '700' : '500',
+                  }}>
+                    {t.label}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+
+          <Input
+            placeholder="Search name or email"
+            value={rawSearch}
+            onChangeText={setRawSearch}
+            autoCapitalize="none"
+            autoCorrect={false}
+            leading={<Icon name="search" size={17} color={color.textTertiary} />}
+            trailing={rawSearch ? <Icon name="close" size={16} color={color.textTertiary} /> : undefined}
+            onTrailingPress={rawSearch ? () => setRawSearch('') : undefined}
+          />
         </View>
-      ) : isError ? (
-        <EmptyState iconName="alert" title="Couldn't load team" actionLabel="Retry" onAction={() => refetch()} />
-      ) : members.length === 0 ? (
-        <EmptyState iconName="team" title="No team members" subtitle="Add your first staff or driver member." actionLabel="Add Member" onAction={() => router.push('/(staff)/team/new')} />
-      ) : (
-        <FlatList
+
+        <Animated.FlatList
           data={members}
           keyExtractor={m => String(m.id)}
-          contentContainerStyle={styles.list}
-          refreshControl={<RefreshControl refreshing={isRefetching} onRefresh={refetch} tintColor={Colors.brand} />}
-          renderItem={({ item }) => {
-            const roleColor = ROLE_COLORS[item.role] ?? Colors.ink3;
-            return (
-              <View style={styles.card}>
-                <View style={styles.cardTop}>
-                  <View style={[styles.avatar, { backgroundColor: roleColor + '20' }]}>
-                    <Text style={[styles.avatarText, { color: roleColor }]}>
-                      {item.first_name[0]?.toUpperCase()}{item.last_name[0]?.toUpperCase()}
-                    </Text>
-                  </View>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.name}>{item.first_name} {item.last_name}</Text>
-                    <Text style={styles.email} numberOfLines={1}>{item.email}</Text>
-                    {item.phone && (
-                      <Text style={styles.phone}>{item.phone}</Text>
-                    )}
-                  </View>
-                  <View style={[styles.roleBadge, { backgroundColor: roleColor + '18' }]}>
-                    <Text style={[styles.roleBadgeText, { color: roleColor }]}>
-                      {item.role}
-                    </Text>
-                  </View>
-                </View>
-                <View style={styles.divider} />
-                <View style={styles.cardBottom}>
-                  <View style={[styles.statusDot, { backgroundColor: item.status === 'ACTIVE' ? Colors.success : Colors.ink4 }]} />
-                  <Text style={styles.statusText}>{item.status}</Text>
-                  <View style={{ flex: 1 }} />
-                  <View style={styles.dateRow}>
-                    <Icon name="calendar" size={12} color={Colors.ink4} />
-                    <Text style={styles.dateText}>Joined {formatDate(item.created_at)}</Text>
-                  </View>
-                </View>
-              </View>
-            );
+          onScroll={onScroll}
+          scrollEventThrottle={16}
+          contentContainerStyle={{
+            paddingHorizontal: gutter,
+            paddingBottom: layout.tabBarHeight + space.xl,
+            gap: space.sm,
           }}
+          showsVerticalScrollIndicator={false}
+          refreshControl={
+            <RefreshControl
+              refreshing={teamQ.isRefetching}
+              onRefresh={() => void teamQ.refetch()}
+              tintColor={color.brand}
+            />
+          }
+          renderItem={({ item, index }) => (
+            <MemberRow
+              member={item}
+              index={index}
+              busy={busyId === item.id}
+              onResend={() => void resend(item)}
+            />
+          )}
+          ListEmptyComponent={
+            teamQ.isLoading ? (
+              <View style={{ gap: space.sm }}>
+                {Array.from({ length: 4 }).map((_, i) => <RowSkeleton key={i} />)}
+              </View>
+            ) : teamQ.isError ? (
+              <EmptyState
+                iconName="alert"
+                tone="danger"
+                title="Couldn’t load the team"
+                actionLabel="Retry"
+                onAction={() => void teamQ.refetch()}
+              />
+            ) : (
+              <EmptyState
+                iconName={role === 'DRIVER' ? 'truck' : 'team'}
+                tone="brand"
+                title={role === 'DRIVER' ? 'No drivers yet' : 'No staff yet'}
+                subtitle={
+                  role === 'DRIVER'
+                    ? 'Add a driver to start assigning deliveries.'
+                    : 'Add a colleague and they’ll be emailed an invitation.'
+                }
+                actionLabel="Add someone"
+                onAction={() => router.push('/(staff)/team/new' as never)}
+              />
+            )
+          }
         />
-      )}
-
-      {/* Filter modal */}
-      <Modal visible={showFilter} transparent animationType="slide" onRequestClose={() => setShowFilter(false)}>
-        <Pressable style={styles.modalOverlay} onPress={() => setShowFilter(false)} />
-        <View style={[styles.modalSheet, { paddingBottom: insets.bottom + 16 }]}>
-          <View style={styles.modalHandle} />
-          <Text style={styles.modalTitle}>Filter by role</Text>
-          {ROLE_FILTERS.map(f => (
-            <Pressable
-              key={f.value}
-              style={styles.modalOption}
-              onPress={() => { setRoleFilter(f.value); setShowFilter(false); }}
-            >
-              <Text style={[styles.modalOptionText, roleFilter === f.value && styles.modalOptionActive]}>
-                {f.label}
-              </Text>
-              {roleFilter === f.value && <Icon name="check" size={16} color={Colors.brand} />}
-            </Pressable>
-          ))}
-        </View>
-      </Modal>
+      </SafeAreaView>
     </View>
   );
 }
 
-const styles = StyleSheet.create({
-  root:    { flex: 1, backgroundColor: Colors.bg },
-  header:  {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingHorizontal: 20, paddingVertical: 14,
-    backgroundColor: Colors.white, borderBottomWidth: 0.5, borderBottomColor: Colors.line,
-  },
-  heading: { ...type.h2, color: Colors.ink },
-  count:   { ...type.caption, color: Colors.ink4, marginTop: 2 },
-  addBtn:  { width: 40, height: 40, borderRadius: 12, backgroundColor: Colors.brand, alignItems: 'center', justifyContent: 'center' },
+function MemberRow({ member, index, busy, onResend }: {
+  member: StaffMember; index: number; busy: boolean; onResend: () => void;
+}) {
+  const name = `${member.first_name} ${member.last_name}`.trim();
+  const initials = name.split(' ').filter(Boolean).slice(0, 2)
+    .map(p => p[0]?.toUpperCase()).join('') || '—';
 
-  toolbar: {
-    flexDirection: 'row', alignItems: 'center', gap: 10,
-    paddingHorizontal: 16, paddingVertical: 10,
-    backgroundColor: Colors.white, borderBottomWidth: 0.5, borderBottomColor: Colors.line,
-  },
-  searchBox: {
-    flex: 1, flexDirection: 'row', alignItems: 'center',
-    backgroundColor: Colors.bg, borderRadius: 12, paddingHorizontal: 12, height: 42,
-    gap: 8, borderWidth: 1, borderColor: Colors.line,
-  },
-  searchInput:     { flex: 1, ...type.body, color: Colors.ink },
-  filterBtn:       { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 14, height: 42, borderRadius: 12, backgroundColor: Colors.bg, borderWidth: 1, borderColor: Colors.line },
-  filterBtnActive: { backgroundColor: Colors.brandLight, borderColor: Colors.brand },
-  filterBtnLabel:  { ...type.btnSm, color: Colors.brand },
+  const isDriver = member.role === 'DRIVER';
+  const unverified = member.verification_status
+    && member.verification_status.toUpperCase() !== 'VERIFIED';
 
-  skeletons: { padding: 16, gap: 8 },
-  list:      { padding: 16, gap: 10, paddingBottom: 32 },
+  // A driver with no driver record can't be assigned deliveries — worth
+  // surfacing, because the row otherwise looks complete.
+  const brokenDriver = isDriver && member.driver_record_id === null;
 
-  card:    { backgroundColor: Colors.white, borderRadius: 16, padding: 16, shadowColor: '#000', shadowOpacity: 0.04, shadowRadius: 8, shadowOffset: { width: 0, height: 2 }, elevation: 1 },
-  cardTop: { flexDirection: 'row', alignItems: 'flex-start', gap: 12 },
-  avatar:  { width: 44, height: 44, borderRadius: 14, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
-  avatarText:  { ...type.h4 },
-  name:        { ...type.h4, color: Colors.ink },
-  email:       { ...type.caption, color: Colors.ink3, marginTop: 2 },
-  phone:       { ...type.caption, color: Colors.ink4, marginTop: 1 },
-  roleBadge:   { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8, alignSelf: 'flex-start' },
-  roleBadgeText: { ...type.overline, fontSize: 10 },
-  divider:     { height: 0.5, backgroundColor: Colors.line, marginVertical: 10 },
-  cardBottom:  { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  statusDot:   { width: 6, height: 6, borderRadius: 3 },
-  statusText:  { ...type.caption, color: Colors.ink4 },
-  dateRow:     { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  dateText:    { ...type.caption, color: Colors.ink4 },
+  return (
+    <Animated.View entering={FadeInDown.delay(Math.min(index, 8) * 35).duration(300)}>
+      <Surface level="sm" padded="md" rounded="lg">
+        <View style={{ gap: space.sm }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.md }}>
+            <View style={{
+              width: 40, height: 40, borderRadius: radius.full,
+              backgroundColor: color.surfaceMuted,
+              alignItems: 'center', justifyContent: 'center',
+            }}>
+              <Text variant="label" tone="secondary">{initials}</Text>
+            </View>
 
-  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.35)' },
-  modalSheet: { backgroundColor: Colors.white, borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingHorizontal: 24, paddingTop: 16, maxHeight: '50%' },
-  modalHandle:      { width: 36, height: 4, borderRadius: 2, backgroundColor: Colors.line, alignSelf: 'center', marginBottom: 16 },
-  modalTitle:       { ...type.h3, color: Colors.ink, marginBottom: 12 },
-  modalOption:      { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 14, borderBottomWidth: 0.5, borderBottomColor: Colors.line },
-  modalOptionText:  { ...type.bodyMed, color: Colors.ink2 },
-  modalOptionActive:{ color: Colors.brand },
-});
+            <View style={{ flex: 1, gap: 2 }}>
+              <Text variant="bodyMedium" numberOfLines={1}>{name}</Text>
+              <Text variant="caption" tone="tertiary" numberOfLines={1}>{member.email}</Text>
+            </View>
+
+            {member.phone ? (
+              <Pressable
+                onPress={() => void Linking.openURL(`tel:${member.phone!.replace(/\s/g, '')}`)}
+                haptic="light"
+                pressScale={0.92}
+                hitSlop={8}
+                accessibilityRole="button"
+                accessibilityLabel={`Call ${name}`}
+                style={{
+                  width: 32, height: 32, borderRadius: radius.full,
+                  backgroundColor: color.brandSoft,
+                  alignItems: 'center', justifyContent: 'center',
+                }}
+              >
+                <Icon name="phone" size={14} color={color.brand} />
+              </Pressable>
+            ) : null}
+          </View>
+
+          <View style={{ flexDirection: 'row', gap: space.sm, flexWrap: 'wrap' }}>
+            <Badge tone={member.role === 'ADMIN' ? 'brand' : 'neutral'} size="sm">
+              {member.role.toLowerCase()}
+            </Badge>
+
+            {isDriver ? (
+              <>
+                <Badge tone="neutral" size="sm">
+                  {member.vehicle_plate ?? 'No vehicle'}
+                </Badge>
+                {member.driver_status ? (
+                  <Badge tone="neutral" size="sm">{member.driver_status.toLowerCase()}</Badge>
+                ) : null}
+              </>
+            ) : (
+              <Badge tone="neutral" size="sm">
+                {member.assigned_customers} {member.assigned_customers === 1 ? 'account' : 'accounts'}
+              </Badge>
+            )}
+
+            {member.job_title ? <Badge tone="neutral" size="sm">{member.job_title}</Badge> : null}
+            {unverified ? <Badge tone="warning" size="sm" dot>Unverified</Badge> : null}
+            {brokenDriver ? <Badge tone="danger" size="sm">Not assignable</Badge> : null}
+          </View>
+
+          {brokenDriver ? (
+            <Text variant="caption" tone="danger">
+              No driver record — deliveries can’t be assigned to them.
+            </Text>
+          ) : null}
+
+          {unverified ? (
+            <Button
+              size="sm"
+              variant="tinted"
+              fullWidth
+              loading={busy}
+              disabled={busy}
+              onPress={onResend}
+              icon={<Icon name="email" size={14} color={color.brand} />}
+            >
+              Resend invitation
+            </Button>
+          ) : (
+            <Text variant="caption" tone="disabled">
+              Joined {formatDate(member.created_at)}
+            </Text>
+          )}
+        </View>
+      </Surface>
+    </Animated.View>
+  );
+}

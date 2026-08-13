@@ -1,183 +1,218 @@
-import React from 'react';
-import {
-  Alert,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native';
-import { router } from 'expo-router';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Colors } from '@/constants/colors';
-import { type } from '@/constants/typography';
-import { Icon, type IconName } from '@/components/ui/Icon';
-import { Button } from '@/components/ui/Button';
-import { useAuth } from '@/contexts/AuthContext';
-import { capitalise } from '@/lib/format';
+/**
+ * Your account — console.
+ *
+ * Deliberately thin. A staff member's own record is managed by an admin
+ * through Team, and `/api/customers/me` is customer-only, so there's no
+ * self-service profile endpoint for internal roles. Rather than build a form
+ * against an endpoint that doesn't exist, this shows what the session knows and
+ * says plainly who to ask for a change.
+ *
+ * Password reset is the one thing they *can* self-serve — it goes through the
+ * same staff forgot-password flow as the sign-in screen.
+ */
 
-export default function StaffProfile() {
-  const insets           = useSafeAreaInsets();
+import React from 'react';
+import { View, ScrollView, Alert, Linking } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { useRouter } from 'expo-router';
+import Animated, { FadeInDown } from 'react-native-reanimated';
+
+import {
+  Text, Button, Icon, Surface, Badge,
+} from '@/components/ui';
+import { ScreenHeader } from '@/components/shared/ScreenHeader';
+import { color, space, radius, gutter, layout } from '@/constants/theme';
+import { useAuth } from '@/contexts/AuthContext';
+import type { IconName } from '@/components/ui/Icon';
+
+const SUPPORT_EMAIL = 'info@envolvepharm.com.ng';
+
+const ROLE_BLURB: Record<string, string> = {
+  ADMIN:  'Full access — settings, team, products, audit trail.',
+  STAFF:  'Orders, customers and deliveries for the accounts assigned to you.',
+  DRIVER: 'Your delivery assignments and handovers.',
+};
+
+export default function ConsoleProfileScreen() {
+  const router = useRouter();
   const { user, logout } = useAuth();
 
-  const initials = user
-    ? `${user.first_name[0]}${user.last_name[0]}`.toUpperCase()
-    : '?';
+  const name = `${user?.first_name ?? ''} ${user?.last_name ?? ''}`.trim();
+  const initials = name.split(' ').filter(Boolean).slice(0, 2)
+    .map(p => p[0]?.toUpperCase()).join('') || '—';
 
-  const isAdmin = user?.role === 'ADMIN' || user?.role === 'SUPER_ADMIN';
+  const role = user?.role ?? 'STAFF';
 
-  function confirmLogout() {
-    Alert.alert('Sign out', 'Are you sure you want to sign out?', [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Sign out', style: 'destructive', onPress: logout },
-    ]);
-  }
+  const confirmSignOut = () => {
+    Alert.alert(
+      'Sign out?',
+      'You’ll need your work email and password to sign back in.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Sign out', style: 'destructive', onPress: () => void logout() },
+      ],
+    );
+  };
 
   return (
-    <ScrollView
-      style={[styles.root, { paddingTop: insets.top }]}
-      contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + 40 }]}
-      showsVerticalScrollIndicator={false}
-    >
-      {/* Avatar */}
-      <View style={styles.avatarSection}>
-        <View style={[styles.avatar, { backgroundColor: Colors.teal }]}>
-          <Text style={styles.avatarText}>{initials}</Text>
-        </View>
-        <Text style={styles.name}>{user?.first_name} {user?.last_name}</Text>
-        <Text style={styles.email}>{user?.email}</Text>
-        <View style={styles.rolePill}>
-          <Text style={styles.roleText}>{capitalise(user?.role ?? '')}</Text>
-        </View>
-      </View>
+    <View style={{ flex: 1, backgroundColor: color.bg }}>
+      <SafeAreaView style={{ flex: 1 }} edges={['top']}>
+        <ScreenHeader variant="compact" back title="Your account" />
 
-      {/* Navigation section */}
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>{capitalise(user?.role ?? 'Staff')}</Text>
-        <MenuRow iconName="overview"   label="Dashboard"  onPress={() => router.push('/(staff)/overview')} />
-        <MenuRow iconName="orders"     label="Orders"     onPress={() => router.push('/(staff)/orders')} />
-        <MenuRow iconName="customers"  label="Customers"  onPress={() => router.push('/(staff)/customers')} />
-        {isAdmin && (
-          <MenuRow iconName="team" label="Team Management" onPress={() => router.push('/(staff)/team')} />
-        )}
-      </View>
+        <ScrollView
+          contentContainerStyle={{
+            padding: gutter,
+            gap: space.lg,
+            paddingBottom: layout.tabBarHeight + space['2xl'],
+          }}
+          showsVerticalScrollIndicator={false}
+        >
+          {/* ── Identity ── */}
+          <Animated.View entering={FadeInDown.duration(340)}>
+            <Surface level="sm" padded="base" rounded="xl">
+              <View style={{ gap: space.base }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.base }}>
+                  <View style={{
+                    width: 56, height: 56, borderRadius: radius.full,
+                    backgroundColor: color.surfaceDark,
+                    alignItems: 'center', justifyContent: 'center',
+                  }}>
+                    <Text variant="title3" style={{ color: '#fff' }}>{initials}</Text>
+                  </View>
+                  <View style={{ flex: 1, gap: 2 }}>
+                    <Text variant="title3" numberOfLines={1}>{name || 'Your account'}</Text>
+                    <Text variant="caption" tone="tertiary" numberOfLines={1}>{user?.email}</Text>
+                  </View>
+                </View>
 
-      {/* Legal */}
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Legal</Text>
-        <MenuRow iconName="clipboard" label="Terms & Conditions" onPress={() => router.push('/terms')} />
-        <MenuRow iconName="lock"      label="Privacy Policy"     onPress={() => router.push('/privacy')} />
-      </View>
+                <View style={{ flexDirection: 'row', gap: space.sm, flexWrap: 'wrap' }}>
+                  <Badge tone={role === 'ADMIN' ? 'brand' : 'neutral'} size="sm" dot>
+                    {role.toLowerCase()}
+                  </Badge>
+                </View>
 
-      {/* Sign out */}
-      <View style={styles.signOutSection}>
-        <Button variant="danger" size="lg" fullWidth onPress={confirmLogout}>
-          Sign Out
-        </Button>
-        <Text style={styles.version}>EnvolveCare Plus v1.0.0</Text>
-      </View>
-    </ScrollView>
+                <Text variant="caption" tone="tertiary">
+                  {ROLE_BLURB[role] ?? 'Console access.'}
+                </Text>
+              </View>
+            </Surface>
+          </Animated.View>
+
+          {/* ── Accountability ── */}
+          <Animated.View entering={FadeInDown.delay(60).duration(320)}>
+            <Surface tone="subtle" level="none" padded="base" rounded="lg">
+              <View style={{ flexDirection: 'row', gap: space.sm }}>
+                <Icon name="shield" size={16} color={color.accent} filled />
+                <Text variant="caption" tone="secondary" style={{ flex: 1 }}>
+                  Every action you take in the console — status changes, payments
+                  recorded, approvals — is logged against your name with a
+                  timestamp.
+                </Text>
+              </View>
+            </Surface>
+          </Animated.View>
+
+          {/* ── Security ── */}
+          <Animated.View entering={FadeInDown.delay(100).duration(320)} style={{ gap: space.sm }}>
+            <Text variant="overline" tone="tertiary">Security</Text>
+            <Surface level="sm" padded="none" rounded="lg">
+              <Row
+                icon="lock"
+                label="Change your password"
+                hint="Sends a code to your work email"
+                onPress={() => router.push('/(auth)/forgot-password?audience=staff' as never)}
+                last
+              />
+            </Surface>
+          </Animated.View>
+
+          {/* ── Changes ── */}
+          <Animated.View entering={FadeInDown.delay(140).duration(320)} style={{ gap: space.sm }}>
+            <Text variant="overline" tone="tertiary">Your details</Text>
+            <Surface level="sm" padded="base" rounded="lg">
+              <View style={{ gap: space.md }}>
+                <Detail label="Name"  value={name || '—'} />
+                <Detail label="Email" value={user?.email ?? '—'} />
+                <Detail label="Role"  value={role.toLowerCase()} />
+              </View>
+            </Surface>
+
+            <View style={{ flexDirection: 'row', gap: space.sm, paddingHorizontal: space.xs }}>
+              <Icon name="info" size={13} color={color.textDisabled} />
+              <Text variant="caption" tone="disabled" style={{ flex: 1 }}>
+                Staff records are maintained by an administrator. Ask them, or email{' '}
+                {SUPPORT_EMAIL}, to change your name, email or role.
+              </Text>
+            </View>
+
+            <Button
+              variant="secondary"
+              fullWidth
+              onPress={() => void Linking.openURL(
+                `mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent('Account change request')}`,
+              )}
+              icon={<Icon name="email" size={16} color={color.text} />}
+            >
+              Request a change
+            </Button>
+          </Animated.View>
+
+          <Button
+            variant="ghost"
+            fullWidth
+            onPress={confirmSignOut}
+            icon={<Icon name="logout" size={16} color={color.danger} />}
+          >
+            <Text variant="bodyMedium" tone="danger">Sign out</Text>
+          </Button>
+        </ScrollView>
+      </SafeAreaView>
+    </View>
   );
 }
 
-function MenuRow({
-  iconName,
-  label,
-  onPress,
-}: {
-  iconName: IconName;
-  label:    string;
-  onPress:  () => void;
+function Row({ icon, label, hint, onPress, last = false }: {
+  icon: IconName; label: string; hint: string; onPress: () => void; last?: boolean;
 }) {
   return (
-    <Pressable
-      style={({ pressed }) => [row.wrap, pressed && { backgroundColor: Colors.bgMuted }]}
+    <Button
+      variant="ghost"
+      fullWidth
       onPress={onPress}
+      style={{
+        justifyContent: 'flex-start',
+        paddingHorizontal: space.base,
+        paddingVertical: space.md,
+        borderBottomWidth: last ? 0 : layout.hairlineWidth,
+        borderBottomColor: color.borderSubtle,
+        borderRadius: 0,
+      }}
     >
-      <View style={row.iconWrap}>
-        <Icon name={iconName} size={18} color={Colors.ink3} />
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.md, flex: 1 }}>
+        <View style={{
+          width: 32, height: 32, borderRadius: radius.full,
+          backgroundColor: color.surfaceMuted,
+          alignItems: 'center', justifyContent: 'center',
+        }}>
+          <Icon name={icon} size={15} color={color.textSecondary} />
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text variant="body">{label}</Text>
+          <Text variant="caption" tone="tertiary">{hint}</Text>
+        </View>
+        <Icon name="chevron-right" size={15} color={color.textDisabled} />
       </View>
-      <Text style={row.label}>{label}</Text>
-      <Icon name="chevron-right" size={16} color={Colors.ink4} />
-    </Pressable>
+    </Button>
   );
 }
 
-const styles = StyleSheet.create({
-  root:    { flex: 1, backgroundColor: Colors.bg },
-  content: { gap: 12 },
-
-  avatarSection: {
-    alignItems:      'center',
-    paddingTop:      36,
-    paddingBottom:   28,
-    backgroundColor: Colors.white,
-    gap:             6,
-  },
-  avatar: {
-    width:          80,
-    height:         80,
-    borderRadius:   24,
-    alignItems:     'center',
-    justifyContent: 'center',
-    marginBottom:   6,
-  },
-  avatarText: { ...type.hero, fontSize: 28, color: Colors.white },
-  name:       { ...type.h2, color: Colors.ink },
-  email:      { ...type.bodySm, color: Colors.ink3 },
-  rolePill: {
-    borderRadius:      20,
-    paddingHorizontal: 14,
-    paddingVertical:   5,
-    backgroundColor:   Colors.tealLight,
-    marginTop:         4,
-  },
-  roleText: { ...type.label, color: Colors.teal },
-
-  section: {
-    backgroundColor: Colors.white,
-    borderRadius:    16,
-    marginHorizontal: 16,
-    overflow:        'hidden',
-    shadowColor:     '#000',
-    shadowOpacity:   0.03,
-    shadowRadius:    6,
-    elevation:       1,
-  },
-  sectionTitle: {
-    ...type.overline,
-    color:             Colors.ink4,
-    paddingHorizontal: 16,
-    paddingTop:        14,
-    paddingBottom:     6,
-  },
-
-  signOutSection: {
-    paddingHorizontal: 16,
-    paddingTop:        8,
-    gap:               14,
-    alignItems:        'center',
-  },
-  version: { ...type.caption, color: Colors.ink4 },
-});
-
-const row = StyleSheet.create({
-  wrap: {
-    flexDirection:   'row',
-    alignItems:      'center',
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    gap:             14,
-    borderTopWidth:  0.5,
-    borderTopColor:  Colors.line,
-  },
-  iconWrap: {
-    width:          36,
-    height:         36,
-    borderRadius:   10,
-    backgroundColor: Colors.bgMuted,
-    alignItems:     'center',
-    justifyContent: 'center',
-  },
-  label: { flex: 1, ...type.bodyMed, color: Colors.ink },
-});
+function Detail({ label, value }: { label: string; value: string }) {
+  return (
+    <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: space.base }}>
+      <Text variant="callout" tone="tertiary">{label}</Text>
+      <Text variant="callout" style={{ flex: 1, textAlign: 'right' }} numberOfLines={1}>
+        {value}
+      </Text>
+    </View>
+  );
+}

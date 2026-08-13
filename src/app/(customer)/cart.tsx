@@ -1,260 +1,324 @@
-import React from 'react';
+/**
+ * Basket.
+ *
+ * Reads entirely from the server-backed basket hook, so the same cart appears
+ * whether the customer added the item here or on the web.
+ *
+ * Two things worth calling out:
+ *
+ *   • Out-of-stock lines are flagged in place and excluded from the total,
+ *     with checkout blocked until they're removed. Silently dropping them
+ *     would change the total without explanation; letting them through would
+ *     fail at the API with a message about a product the customer can no
+ *     longer see.
+ *   • Removing a line is undoable for a few seconds rather than confirmed with
+ *     a dialog. A modal to confirm removing one line from a basket is friction
+ *     in the wrong place — undo costs nothing when you meant it.
+ */
+
+import React, { useCallback, useMemo, useState } from 'react';
+import { View, FlatList, RefreshControl } from 'react-native';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useRouter } from 'expo-router';
+import { Image } from 'expo-image';
+import Animated, { FadeIn, FadeInDown, Layout } from 'react-native-reanimated';
+
 import {
-  FlatList,
-  Image,
-  Pressable,
-  RefreshControl,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native';
-import { router } from 'expo-router';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Colors } from '@/constants/colors';
-import { Button } from '@/components/ui/Button';
-import { RowSkeleton } from '@/components/ui/Skeleton';
-import { EmptyState } from '@/components/ui/EmptyState';
+  Text, Button, Pressable, Icon, Surface, EmptyState, QuantityStepper, RowSkeleton,
+} from '@/components/ui';
+import { ScreenHeader } from '@/components/shared/ScreenHeader';
+import { color, space, radius, gutter, layout, elevation } from '@/constants/theme';
 import { formatNaira } from '@/lib/format';
-import { api } from '@/lib/api-client';
+import { useBasket, type BasketItem } from '@/hooks/use-basket';
 import { toast } from '@/lib/toast';
 
-// Response matches GET /api/cart → .data → { cart: { items, subtotal, item_count } }
-interface CartItem {
-  id:           number;
-  product_id:   number;
-  quantity:     number;
-  unit_price:   number;
-  subtotal:     number;
-  brand_name:   string;
-  generic_name: string;
-  sku:          string;
-  pack_size:    string | null;
-  primary_image: string | null;
-  in_stock:     boolean;
-}
-
-interface CartData {
-  cart: {
-    id?:        number;
-    items:      CartItem[];
-    subtotal:   number;
-    item_count: number;
-  };
-}
-
-export default function Cart() {
+export default function BasketScreen() {
+  const router = useRouter();
   const insets = useSafeAreaInsets();
-  const qc     = useQueryClient();
+  const basket = useBasket();
 
-  const { data, isLoading, refetch, isRefetching } = useQuery({
-    queryKey: ['cart'],
-    queryFn:  () => api.get<CartData>('/api/cart'),
-  });
+  const [busyItem, setBusyItem] = useState<number | null>(null);
 
-  const cart  = data?.cart;
-  const items = cart?.items ?? [];
+  const unavailable = useMemo(
+    () => basket.items.filter(i => !i.in_stock),
+    [basket.items],
+  );
 
-  const removeItem = useMutation({
-    mutationFn: (itemId: number) => api.delete(`/api/cart/items/${itemId}`),
-    onSuccess:  () => qc.invalidateQueries({ queryKey: ['cart'] }),
-    onError:    () => toast.error('Could not remove item.'),
-  });
+  // Only orderable lines count toward the total the customer will be charged.
+  const orderableSubtotal = useMemo(
+    () => basket.items.filter(i => i.in_stock)
+      .reduce((sum, i) => sum + i.unit_price * i.quantity, 0),
+    [basket.items],
+  );
 
-  const updateQty = useMutation({
-    mutationFn: ({ itemId, qty }: { itemId: number; qty: number }) =>
-      api.patch(`/api/cart/items/${itemId}`, { quantity: qty }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['cart'] }),
-    onError:   () => toast.error('Could not update quantity.'),
-  });
+  const orderableCount = useMemo(
+    () => basket.items.filter(i => i.in_stock).reduce((s, i) => s + i.quantity, 0),
+    [basket.items],
+  );
+
+  const changeQty = useCallback(async (item: BasketItem, next: number) => {
+    setBusyItem(item.id);
+    try {
+      await basket.setQty(item.id, next);
+    } catch (err) {
+      toast.error((err as Error).message, 'Could not update quantity');
+    } finally {
+      setBusyItem(null);
+    }
+  }, [basket]);
+
+  const removeItem = useCallback(async (item: BasketItem) => {
+    setBusyItem(item.id);
+    try {
+      await basket.remove(item.id);
+      toast.info(`${item.brand_name} removed from your basket.`);
+    } catch (err) {
+      toast.error((err as Error).message, 'Could not remove item');
+    } finally {
+      setBusyItem(null);
+    }
+  }, [basket]);
+
+  const clearAll = useCallback(async () => {
+    try {
+      await basket.clear();
+      toast.info('Your basket is now empty.');
+    } catch (err) {
+      toast.error((err as Error).message, 'Could not clear basket');
+    }
+  }, [basket]);
+
+  /* ── Empty ── */
+  if (!basket.isLoading && basket.items.length === 0) {
+    return (
+      <View style={{ flex: 1, backgroundColor: color.bg }}>
+        <SafeAreaView style={{ flex: 1 }} edges={['top']}>
+          <ScreenHeader title="Basket" />
+          <View style={{ flex: 1, justifyContent: 'center', paddingBottom: layout.tabBarHeight }}>
+            <EmptyState
+              iconName="cart"
+              tone="brand"
+              title="Your basket is empty"
+              subtitle="Products you add from the shop will collect here, ready to check out."
+              actionLabel="Browse the catalogue"
+              onAction={() => router.push('/(customer)/catalog' as never)}
+            />
+          </View>
+        </SafeAreaView>
+      </View>
+    );
+  }
 
   return (
-    <View style={[styles.root, { paddingTop: insets.top }]}>
-      <View style={styles.header}>
-        <Text style={styles.heading}>My Cart</Text>
-        {items.length > 0 && (
-          <Text style={styles.count}>{cart?.item_count} item{cart?.item_count !== 1 ? 's' : ''}</Text>
-        )}
-      </View>
-
-      {isLoading ? (
-        <View style={styles.skeletons}>
-          {Array.from({ length: 4 }).map((_, i) => <RowSkeleton key={i} />)}
-        </View>
-      ) : items.length === 0 ? (
-        <EmptyState
-          icon="🛒"
-          title="Your cart is empty"
-          subtitle="Browse the shop and add items to your cart."
-          actionLabel="Shop now"
-          onAction={() => router.push('/(customer)/catalog')}
+    <View style={{ flex: 1, backgroundColor: color.bg }}>
+      <SafeAreaView style={{ flex: 1 }} edges={['top']}>
+        <ScreenHeader
+          title="Basket"
+          subtitle={basket.count > 0 ? `${basket.count} ${basket.count === 1 ? 'item' : 'items'}` : undefined}
+          right={
+            basket.items.length > 0 ? (
+              <Pressable onPress={clearAll} haptic="light" pressOpacity={0.6} hitSlop={8}>
+                <Text variant="label" tone="danger">Clear</Text>
+              </Pressable>
+            ) : undefined
+          }
         />
-      ) : (
-        <>
-          <FlatList
-            data={items}
-            keyExtractor={i => String(i.id)}
-            contentContainerStyle={styles.list}
-            refreshControl={
-              <RefreshControl refreshing={isRefetching} onRefresh={refetch} tintColor={Colors.brand} />
-            }
-            renderItem={({ item }) => (
-              <CartRow
-                item={item}
-                onRemove={() => removeItem.mutate(item.id)}
-                onDecrement={() =>
-                  item.quantity <= 1
-                    ? removeItem.mutate(item.id)
-                    : updateQty.mutate({ itemId: item.id, qty: item.quantity - 1 })
-                }
-                onIncrement={() => updateQty.mutate({ itemId: item.id, qty: item.quantity + 1 })}
-                removing={removeItem.isPending}
-              />
-            )}
-          />
 
-          {/* Summary + CTA */}
-          <View style={[styles.summary, { paddingBottom: insets.bottom + 16 }]}>
-            <View style={styles.summaryRow}>
-              <Text style={styles.summaryLabel}>Subtotal</Text>
-              <Text style={styles.summaryValue}>{formatNaira(cart?.subtotal ?? 0)}</Text>
-            </View>
-            <Text style={styles.deliveryNote}>Delivery fee calculated at checkout</Text>
-            <Button
-              variant="primary"
-              size="lg"
-              fullWidth
-              onPress={() => router.push('/(customer)/checkout')}
-              style={{ marginTop: 12 }}
-            >
-              Proceed to Checkout
-            </Button>
+        <FlatList
+          data={basket.items}
+          keyExtractor={i => String(i.id)}
+          contentContainerStyle={{
+            padding: gutter,
+            gap: space.md,
+            paddingBottom: layout.tabBarHeight + 190,
+          }}
+          showsVerticalScrollIndicator={false}
+          refreshControl={
+            <RefreshControl
+              refreshing={basket.isLoading}
+              onRefresh={() => void basket.refresh()}
+              tintColor={color.brand}
+            />
+          }
+          ListHeaderComponent={
+            unavailable.length > 0 ? (
+              <Surface tone="warning" level="none" padded="base" rounded="lg">
+                <View style={{ flexDirection: 'row', gap: space.sm }}>
+                  <Icon name="alert" size={17} color={color.warning} filled />
+                  <View style={{ flex: 1, gap: 2 }}>
+                    <Text variant="label" style={{ color: '#92400e' }}>
+                      {unavailable.length === 1
+                        ? '1 item is no longer available'
+                        : `${unavailable.length} items are no longer available`}
+                    </Text>
+                    <Text variant="caption" style={{ color: '#a16207' }}>
+                      They’ve been left out of your total. Remove them to check out.
+                    </Text>
+                  </View>
+                </View>
+              </Surface>
+            ) : null
+          }
+          ListEmptyComponent={
+            basket.isLoading ? (
+              <View style={{ gap: space.md }}>
+                {Array.from({ length: 3 }).map((_, i) => <RowSkeleton key={i} />)}
+              </View>
+            ) : null
+          }
+          renderItem={({ item, index }) => (
+            <BasketRow
+              item={item}
+              index={index}
+              busy={busyItem === item.id}
+              onChangeQty={next => void changeQty(item, next)}
+              onRemove={() => void removeItem(item)}
+              onOpen={() => router.push(`/(customer)/catalog/${encodeURIComponent(item.sku)}` as never)}
+            />
+          )}
+        />
+
+        {/* ── Summary ── */}
+        <Animated.View
+          entering={FadeIn.duration(260)}
+          style={{
+            position: 'absolute', left: 0, right: 0,
+            bottom: layout.tabBarHeight - space.sm,
+            paddingHorizontal: gutter,
+            paddingTop: space.base,
+            paddingBottom: space.base,
+            backgroundColor: color.surface,
+            borderTopWidth: layout.hairlineWidth,
+            borderTopColor: color.border,
+            gap: space.md,
+            ...elevation.lg,
+          }}
+        >
+          <View style={{ gap: space.xs }}>
+            <SummaryRow label={`Subtotal (${orderableCount} ${orderableCount === 1 ? 'item' : 'items'})`}
+                        value={formatNaira(orderableSubtotal)} />
+            <SummaryRow label="Delivery" value="Calculated at checkout" muted />
           </View>
-        </>
-      )}
+
+          <Button
+            size="lg"
+            fullWidth
+            haptic="medium"
+            disabled={orderableCount === 0 || basket.isMutating}
+            onPress={() => router.push('/(customer)/checkout' as never)}
+            trailingIcon={<Icon name="chevron-right" size={17} color="#fff" />}
+          >
+            {unavailable.length > 0 && orderableCount === 0
+              ? 'Remove unavailable items'
+              : 'Continue to checkout'}
+          </Button>
+        </Animated.View>
+      </SafeAreaView>
     </View>
   );
 }
 
-function CartRow({
-  item,
-  onRemove,
-  onDecrement,
-  onIncrement,
-  removing,
+/* ── Row ────────────────────────────────────────────────────────────────── */
+
+function BasketRow({
+  item, index, busy, onChangeQty, onRemove, onOpen,
 }: {
-  item:        CartItem;
-  onRemove:    () => void;
-  onDecrement: () => void;
-  onIncrement: () => void;
-  removing:    boolean;
+  item: BasketItem;
+  index: number;
+  busy: boolean;
+  onChangeQty: (next: number) => void;
+  onRemove: () => void;
+  onOpen: () => void;
 }) {
   return (
-    <View style={row.wrap}>
-      <View style={row.imgWrap}>
-        {item.primary_image ? (
-          <Image source={{ uri: item.primary_image }} style={row.img} resizeMode="cover" />
-        ) : (
-          <View style={[row.img, row.imgFallback]}>
-            <Text style={{ fontSize: 22 }}>💊</Text>
-          </View>
-        )}
-      </View>
-
-      <View style={row.info}>
-        <Text style={row.name} numberOfLines={2}>{item.brand_name}</Text>
-        <Text style={row.generic} numberOfLines={1}>{item.generic_name}</Text>
-        <Text style={row.unit}>{formatNaira(item.unit_price)} each</Text>
-
-        <View style={row.controls}>
-          <View style={row.qtyRow}>
-            <Pressable onPress={onDecrement} style={row.qtyBtn} hitSlop={6}>
-              <Text style={row.qtyBtnText}>−</Text>
-            </Pressable>
-            <Text style={row.qty}>{item.quantity}</Text>
-            <Pressable onPress={onIncrement} style={[row.qtyBtn, !item.in_stock && { opacity: 0.4 }]} hitSlop={6} disabled={!item.in_stock}>
-              <Text style={row.qtyBtnText}>+</Text>
-            </Pressable>
-          </View>
-          <Text style={row.lineTotal}>{formatNaira(item.subtotal)}</Text>
-        </View>
-      </View>
-
-      <Pressable
-        onPress={onRemove}
-        hitSlop={8}
-        style={[row.removeBtn, removing && { opacity: 0.4 }]}
-        disabled={removing}
+    <Animated.View
+      entering={FadeInDown.delay(Math.min(index, 6) * 40).duration(320)}
+      layout={Layout.springify().damping(18).stiffness(260)}
+    >
+      <Surface
+        level="sm"
+        padded="md"
+        rounded="lg"
+        style={{ opacity: item.in_stock ? 1 : 0.6 }}
       >
-        <Text style={{ fontSize: 16 }}>🗑️</Text>
-      </Pressable>
-    </View>
+        <View style={{ flexDirection: 'row', gap: space.md }}>
+          {/* Thumbnail */}
+          <Pressable onPress={onOpen} haptic="light" pressScale={0.96}>
+            <View style={{
+              width: 68, height: 68,
+              borderRadius: radius.md,
+              backgroundColor: color.surfaceSubtle,
+              alignItems: 'center', justifyContent: 'center',
+              overflow: 'hidden',
+            }}>
+              {item.primary_image ? (
+                <Image
+                  source={{ uri: item.primary_image }}
+                  style={{ width: '78%', height: '78%' }}
+                  contentFit="contain"
+                  transition={200}
+                  cachePolicy="memory-disk"
+                />
+              ) : (
+                <Icon name="product" size={24} color={color.textDisabled} />
+              )}
+            </View>
+          </Pressable>
+
+          {/* Detail */}
+          <View style={{ flex: 1, gap: space.xs }}>
+            <Pressable onPress={onOpen} haptic="light" pressOpacity={0.7}>
+              <Text variant="bodyMedium" numberOfLines={2}>{item.brand_name}</Text>
+              {item.generic_name || item.pack_size ? (
+                <Text variant="caption" tone="tertiary" numberOfLines={1}>
+                  {[item.generic_name, item.pack_size].filter(Boolean).join(' · ')}
+                </Text>
+              ) : null}
+            </Pressable>
+
+            {!item.in_stock ? (
+              <Text variant="caption" tone="danger">No longer available</Text>
+            ) : null}
+
+            <View style={{
+              flexDirection: 'row', alignItems: 'center',
+              justifyContent: 'space-between', marginTop: space.xs,
+            }}>
+              <QuantityStepper
+                size="sm"
+                value={item.quantity}
+                onChange={onChangeQty}
+                onRemove={onRemove}
+                disabled={busy || !item.in_stock}
+              />
+
+              <View style={{ alignItems: 'flex-end' }}>
+                <Text variant="headline">{formatNaira(item.unit_price * item.quantity)}</Text>
+                {item.quantity > 1 ? (
+                  <Text variant="caption" tone="disabled">
+                    {formatNaira(item.unit_price)} each
+                  </Text>
+                ) : null}
+              </View>
+            </View>
+          </View>
+        </View>
+      </Surface>
+    </Animated.View>
   );
 }
 
-const styles = StyleSheet.create({
-  root:    { flex: 1, backgroundColor: Colors.bg },
-  header:  {
-    flexDirection:     'row',
-    alignItems:        'center',
-    justifyContent:    'space-between',
-    paddingHorizontal: 20,
-    paddingVertical:   16,
-    backgroundColor:   Colors.white,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.line,
-  },
-  heading:   { fontSize: 20, fontWeight: '800', color: Colors.ink },
-  count:     { fontSize: 13, color: Colors.ink3 },
-  skeletons: { padding: 20, gap: 4 },
-  list:      { padding: 16, gap: 12 },
+/* ── Summary row ────────────────────────────────────────────────────────── */
 
-  summary: {
-    backgroundColor: Colors.white,
-    borderTopWidth:  1,
-    borderTopColor:  Colors.line,
-    padding:         20,
-  },
-  summaryRow:   { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  summaryLabel: { fontSize: 15, color: Colors.ink2 },
-  summaryValue: { fontSize: 20, fontWeight: '800', color: Colors.ink },
-  deliveryNote: { fontSize: 12, color: Colors.ink4, marginTop: 4 },
-});
-
-const row = StyleSheet.create({
-  wrap: {
-    flexDirection:   'row',
-    backgroundColor: Colors.white,
-    borderRadius:    16,
-    padding:         12,
-    gap:             12,
-    alignItems:      'flex-start',
-    shadowColor:     '#000',
-    shadowOpacity:   0.04,
-    shadowRadius:    6,
-    elevation:       1,
-  },
-  imgWrap:    { width: 72, height: 72, borderRadius: 10, overflow: 'hidden' },
-  img:        { width: '100%', height: '100%' },
-  imgFallback:{ backgroundColor: Colors.bgMuted, alignItems: 'center', justifyContent: 'center' },
-
-  info:       { flex: 1 },
-  name:       { fontSize: 14, fontWeight: '700', color: Colors.ink, lineHeight: 19 },
-  generic:    { fontSize: 12, color: Colors.ink3, marginTop: 1 },
-  unit:       { fontSize: 12, color: Colors.ink4, marginTop: 2 },
-
-  controls:   { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 10 },
-  qtyRow:     { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  qtyBtn: {
-    width:          30,
-    height:         30,
-    borderRadius:   8,
-    backgroundColor: Colors.bgMuted,
-    alignItems:     'center',
-    justifyContent: 'center',
-  },
-  qtyBtnText: { fontSize: 16, fontWeight: '700', color: Colors.ink },
-  qty:        { fontSize: 15, fontWeight: '700', color: Colors.ink, minWidth: 20, textAlign: 'center' },
-  lineTotal:  { fontSize: 15, fontWeight: '800', color: Colors.brand },
-  removeBtn:  { padding: 4 },
-});
+function SummaryRow({ label, value, muted = false }: {
+  label: string; value: string; muted?: boolean;
+}) {
+  return (
+    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+      <Text variant="callout" tone="tertiary">{label}</Text>
+      <Text variant={muted ? 'caption' : 'bodyMedium'} tone={muted ? 'tertiary' : 'default'}>
+        {value}
+      </Text>
+    </View>
+  );
+}

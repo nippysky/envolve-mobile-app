@@ -5,9 +5,10 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { Stack } from 'expo-router';
-import ToastComponent from 'react-native-toast-message';
 
 import { AuthProvider } from '@/contexts/AuthContext';
+import { BasketProvider } from '@/hooks/use-basket';
+import { ToastHost } from '@/components/ui';
 
 // Hold splash until we signal ready
 SplashScreen.preventAutoHideAsync().catch(() => {});
@@ -33,7 +34,10 @@ export default function RootLayout() {
       <SafeAreaProvider>
         <QueryClientProvider client={queryClient}>
           <AuthProvider>
-            <StatusBar style="light" />
+            {/* Basket sits inside AuthProvider — it reads the session to know
+                whether to fetch a cart at all. */}
+            <BasketProvider>
+            <StatusBar style="dark" />
             <Stack screenOptions={{ headerShown: false, animation: 'fade' }}>
               <Stack.Screen name="index" />
               <Stack.Screen name="onboarding" />
@@ -45,10 +49,11 @@ export default function RootLayout() {
               <Stack.Screen name="(staff)"  />
               <Stack.Screen name="(driver)" />
             </Stack>
+            </BasketProvider>
           </AuthProvider>
         </QueryClientProvider>
+        <ToastHost />
       </SafeAreaProvider>
-      <ToastComponent />
     </GestureHandlerRootView>
   );
 }

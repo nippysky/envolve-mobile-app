@@ -1,249 +1,377 @@
 /**
- * Add Staff / Driver / Admin
- * POST /api/staff — fields match createSchema exactly.
- * The backend sends a verification email so the user can set their password.
+ * Add a team member.
+ *
+ * One form, two shapes. Picking DRIVER swaps the employment fields for vehicle
+ * fields, because a driver record needs a plate to be assignable and a job
+ * title on a driver is noise.
+ *
+ * The API creates the user and emails a verification link; they set their own
+ * password from it. As with customers, there's no password field here on
+ * purpose — a colleague typing a credential on someone else's behalf puts it
+ * somewhere it shouldn't be.
+ *
+ * Note the role enum: the API accepts only STAFF or DRIVER. Admins are
+ * promoted from an existing staff record rather than created, so ADMIN isn't
+ * offered.
  */
 
-import React, { useState } from 'react';
+import React, { useCallback, useState } from 'react';
+import { View, ScrollView, KeyboardAvoidingView, Platform } from 'react-native';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useRouter } from 'expo-router';
+import { useQueryClient } from '@tanstack/react-query';
+import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';
+
 import {
-  KeyboardAvoidingView,
-  Platform,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native';
-import { router } from 'expo-router';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { Colors } from '@/constants/colors';
-import { type } from '@/constants/typography';
-import { Icon, type IconName } from '@/components/ui/Icon';
+  Text, Button, Input, Pressable, Icon, Surface,
+} from '@/components/ui';
 import { ScreenHeader } from '@/components/shared/ScreenHeader';
-import { Button } from '@/components/ui/Button';
-import { Input } from '@/components/ui/Input';
-import { api, ApiError } from '@/lib/api-client';
+import { color, space, radius, gutter, layout } from '@/constants/theme';
+import { useAuth } from '@/contexts/AuthContext';
+import { createStaff } from '@/lib/services/admin.service';
+import { ApiError } from '@/lib/api-client';
 import { toast } from '@/lib/toast';
 
-type RoleOption = 'STAFF' | 'DRIVER';
-
-const ROLES: { value: RoleOption; label: string; desc: string; iconName: IconName; color: string }[] = [
+const ROLES = [
   {
-    value:    'STAFF',
-    label:    'Staff',
-    desc:     'Pharmacist, admin, or manager with portal access',
-    iconName: 'customers',
-    color:    Colors.brand,
+    value: 'STAFF' as const,
+    label: 'Sales & admin',
+    hint: 'Handles orders, customers and deliveries',
+    icon: 'team' as const,
   },
   {
-    value:    'DRIVER',
-    label:    'Driver',
-    desc:     'Delivery driver with the EnvolveCare driver portal',
-    iconName: 'truck',
-    color:    Colors.warning,
+    value: 'DRIVER' as const,
+    label: 'Driver',
+    hint: 'Collects and delivers orders',
+    icon: 'truck' as const,
   },
 ];
 
-export default function AddTeamMember() {
+export default function AddTeamMemberScreen() {
+  const router = useRouter();
   const insets = useSafeAreaInsets();
-  const qc     = useQueryClient();
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
 
-  const [firstName,    setFirstName]    = useState('');
-  const [middleName,   setMiddleName]   = useState('');
-  const [lastName,     setLastName]     = useState('');
-  const [email,        setEmail]        = useState('');
-  const [phone,        setPhone]        = useState('');
-  const [gender,       setGender]       = useState('');
-  const [department,   setDepartment]   = useState('');
-  const [jobTitle,     setJobTitle]     = useState('');
-  const [role,         setRole]         = useState<RoleOption>('STAFF');
+  const isAdmin = user?.role === 'ADMIN';
 
-  // Driver-specific
-  const [vehiclePlate, setVehiclePlate] = useState('');
-  const [vehicleType,  setVehicleType]  = useState('');
-  const [region,       setRegion]       = useState('');
+  const [role,    setRole]    = useState<'STAFF' | 'DRIVER'>('STAFF');
+  const [first,   setFirst]   = useState('');
+  const [middle,  setMiddle]  = useState('');
+  const [last,    setLast]    = useState('');
+  const [email,   setEmail]   = useState('');
+  const [phone,   setPhone]   = useState('');
 
-  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [department, setDepartment] = useState('');
+  const [jobTitle,   setJobTitle]   = useState('');
 
-  const createMember = useMutation({
-    mutationFn: () => {
-      const body: Record<string, unknown> = {
-        first_name:  firstName.trim(),
-        last_name:   lastName.trim(),
+  const [plate,   setPlate]   = useState('');
+  const [vehicle, setVehicle] = useState('');
+  const [region,  setRegion]  = useState('');
+
+  const [busy, setBusy] = useState(false);
+  const [errs, setErrs] = useState<Record<string, string>>({});
+
+  const clear = (k: string) => setErrs(p => ({ ...p, [k]: '' }));
+
+  const validate = useCallback(() => {
+    const e: Record<string, string> = {};
+    if (!first.trim())        e.first = 'First name is required.';
+    if (!last.trim())         e.last  = 'Last name is required.';
+    if (!email.includes('@')) e.email = 'Enter a valid work email address.';
+
+    // A driver without a plate can still be created, but can't be identified
+    // at the gate — worth flagging rather than silently allowing.
+    if (role === 'DRIVER' && !plate.trim()) {
+      e.plate = 'Add the vehicle plate so dispatch can identify them.';
+    }
+
+    setErrs(e);
+    return Object.keys(e).length === 0;
+  }, [first, last, email, role, plate]);
+
+  const submit = useCallback(async () => {
+    if (busy || !validate()) return;
+
+    setBusy(true);
+    try {
+      await createStaff({
+        first_name:  first.trim(),
+        middle_name: middle.trim() || undefined,
+        last_name:   last.trim(),
         email:       email.trim().toLowerCase(),
+        phone:       phone.trim() || undefined,
         role,
-      };
-      if (middleName.trim())  body.middle_name   = middleName.trim();
-      if (phone.trim())       body.phone         = phone.trim();
-      if (gender.trim())      body.gender        = gender.trim();
-      if (department.trim())  body.department    = department.trim();
-      if (jobTitle.trim())    body.job_title     = jobTitle.trim();
-      if (role === 'DRIVER') {
-        if (vehiclePlate.trim()) body.vehicle_plate = vehiclePlate.trim();
-        if (vehicleType.trim())  body.vehicle_type  = vehicleType.trim();
-        if (region.trim())       body.region        = region.trim();
-      }
-      return api.post('/api/staff', body);
-    },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['staff-team'] });
-      toast.success('Team member added. A verification email has been sent.', '✅ Member Added');
+        // Only send the fields that belong to the chosen shape.
+        department:    role === 'STAFF' ? (department.trim() || undefined) : undefined,
+        job_title:     role === 'STAFF' ? (jobTitle.trim()   || undefined) : undefined,
+        vehicle_plate: role === 'DRIVER' ? (plate.trim()   || undefined) : undefined,
+        vehicle_type:  role === 'DRIVER' ? (vehicle.trim() || undefined) : undefined,
+        region:        role === 'DRIVER' ? (region.trim()  || undefined) : undefined,
+      });
+
+      await queryClient.invalidateQueries({ queryKey: ['staff'] });
+      toast.success(`A verification email has been sent to ${email.trim()}.`, 'Member added');
       router.back();
-    },
-    onError: (e) => {
-      if (e instanceof ApiError && e.errors) {
-        const fe: Record<string, string> = {};
-        for (const [k, msgs] of Object.entries(e.errors)) {
-          fe[k] = Array.isArray(msgs) ? msgs[0] : String(msgs);
-        }
-        setErrors(fe);
+    } catch (err) {
+      const e = err as ApiError;
+      if (e.errors) {
+        setErrs({
+          first: e.errors.first_name?.[0] ?? '',
+          last:  e.errors.last_name?.[0] ?? '',
+          email: e.errors.email?.[0] ?? '',
+          phone: e.errors.phone?.[0] ?? '',
+          plate: e.errors.vehicle_plate?.[0] ?? '',
+        });
+        toast.error('Check the highlighted fields.', 'Couldn’t add member');
+      } else {
+        toast.error(e.message, 'Couldn’t add member');
       }
-      toast.error(e instanceof ApiError ? e.message : 'Failed to add member.');
-    },
-  });
+      setBusy(false);
+    }
+  }, [busy, validate, first, middle, last, email, phone, role,
+      department, jobTitle, plate, vehicle, region, queryClient, router]);
 
-  function validate() {
-    const errs: Record<string, string> = {};
-    if (!firstName.trim()) errs.first_name = 'First name is required.';
-    if (!lastName.trim())  errs.last_name  = 'Last name is required.';
-    if (!email.trim())     errs.email      = 'Email is required.';
-    setErrors(errs);
-    return Object.keys(errs).length === 0;
-  }
-
-  function handleSubmit() {
-    if (!validate()) return;
-    createMember.mutate();
+  if (!isAdmin) {
+    return (
+      <View style={{ flex: 1, backgroundColor: color.bg }}>
+        <SafeAreaView style={{ flex: 1 }} edges={['top']}>
+          <ScreenHeader variant="compact" back title="Add member" />
+          <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: gutter, gap: space.md }}>
+            <Icon name="lock" size={30} color={color.textDisabled} />
+            <Text variant="title3" align="center">Admins only</Text>
+            <Text variant="callout" tone="tertiary" align="center">
+              Team members are added by administrators.
+            </Text>
+          </View>
+        </SafeAreaView>
+      </View>
+    );
   }
 
   return (
-    <KeyboardAvoidingView
-      style={{ flex: 1, backgroundColor: Colors.bg }}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-    >
-      <ScreenHeader title="Add Team Member" back onBack={() => router.back()} />
+    <View style={{ flex: 1, backgroundColor: color.bg }}>
+      <SafeAreaView style={{ flex: 1 }} edges={['top']}>
+        <ScreenHeader
+          variant="compact"
+          back
+          title="Add member"
+          subtitle="They’ll be emailed a verification link"
+        />
 
-      <ScrollView
-        contentContainerStyle={[styles.scroll, { paddingBottom: insets.bottom + 110 }]}
-        keyboardShouldPersistTaps="handled"
-        showsVerticalScrollIndicator={false}
-      >
-        {/* Role selection */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Role</Text>
-          <View style={styles.roleRow}>
-            {ROLES.map(r => (
-              <Pressable
-                key={r.value}
-                style={[styles.roleCard, role === r.value && { borderColor: r.color, backgroundColor: r.color + '08' }]}
-                onPress={() => setRole(r.value)}
-              >
-                <View style={[styles.roleIcon, { backgroundColor: r.color + '18' }]}>
-                  <Icon name={r.iconName} size={22} color={r.color} />
+        <KeyboardAvoidingView
+          style={{ flex: 1 }}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          keyboardVerticalOffset={insets.top + 56}
+        >
+          <ScrollView
+            contentContainerStyle={{ padding: gutter, gap: space.xl, paddingBottom: 160 }}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+          >
+            {/* ── Role ── */}
+            <Animated.View entering={FadeInDown.duration(320)} style={{ gap: space.md }}>
+              <Text variant="overline" tone="tertiary">Role</Text>
+              <View style={{ gap: space.sm }}>
+                {ROLES.map(r => {
+                  const active = role === r.value;
+                  return (
+                    <Pressable
+                      key={r.value}
+                      onPress={() => setRole(r.value)}
+                      disabled={busy}
+                      haptic="light"
+                      pressScale={0.98}
+                      accessibilityRole="radio"
+                      accessibilityState={{ selected: active }}
+                      style={{
+                        flexDirection: 'row', alignItems: 'center', gap: space.md,
+                        padding: space.base,
+                        borderRadius: radius.lg,
+                        backgroundColor: active ? color.brandSoft : color.surface,
+                        borderWidth: active ? 1.5 : layout.hairlineWidth,
+                        borderColor: active ? color.brand : color.border,
+                      }}
+                    >
+                      <View style={{
+                        width: 36, height: 36, borderRadius: radius.full,
+                        backgroundColor: active ? color.brand : color.surfaceMuted,
+                        alignItems: 'center', justifyContent: 'center',
+                      }}>
+                        <Icon name={r.icon} size={16} color={active ? '#fff' : color.textTertiary} filled={active} />
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text variant="bodyMedium">{r.label}</Text>
+                        <Text variant="caption" tone="tertiary">{r.hint}</Text>
+                      </View>
+                      <View style={{
+                        width: 20, height: 20, borderRadius: radius.full,
+                        borderWidth: active ? 0 : 1.5,
+                        borderColor: color.borderStrong,
+                        backgroundColor: active ? color.brand : 'transparent',
+                        alignItems: 'center', justifyContent: 'center',
+                      }}>
+                        {active ? <Icon name="check" size={11} color="#fff" /> : null}
+                      </View>
+                    </Pressable>
+                  );
+                })}
+              </View>
+
+              <Surface tone="subtle" level="none" padded="md" rounded="md">
+                <View style={{ flexDirection: 'row', gap: space.sm }}>
+                  <Icon name="info" size={14} color={color.textTertiary} />
+                  <Text variant="caption" tone="tertiary" style={{ flex: 1 }}>
+                    Admin access is granted by promoting an existing member, not at
+                    creation.
+                  </Text>
                 </View>
-                <Text style={[styles.roleLabel, role === r.value && { color: r.color }]}>{r.label}</Text>
-                <Text style={styles.roleDesc}>{r.desc}</Text>
-                {role === r.value && (
-                  <View style={[styles.roleCheck, { backgroundColor: r.color }]}>
-                    <Icon name="check" size={11} color={Colors.white} />
-                  </View>
-                )}
-              </Pressable>
-            ))}
-          </View>
+              </Surface>
+            </Animated.View>
+
+            {/* ── Person ── */}
+            <Animated.View entering={FadeInDown.delay(60).duration(320)} style={{ gap: space.md }}>
+              <Text variant="overline" tone="tertiary">Details</Text>
+
+              <View style={{ flexDirection: 'row', gap: space.md }}>
+                <Input
+                  label="First name"
+                  value={first}
+                  onChangeText={v => { setFirst(v); clear('first'); }}
+                  error={errs.first}
+                  autoCapitalize="words"
+                  editable={!busy}
+                  required
+                  containerStyle={{ flex: 1 }}
+                />
+                <Input
+                  label="Last name"
+                  value={last}
+                  onChangeText={v => { setLast(v); clear('last'); }}
+                  error={errs.last}
+                  autoCapitalize="words"
+                  editable={!busy}
+                  required
+                  containerStyle={{ flex: 1 }}
+                />
+              </View>
+
+              <Input
+                label="Middle name"
+                placeholder="Optional"
+                value={middle}
+                onChangeText={setMiddle}
+                autoCapitalize="words"
+                editable={!busy}
+              />
+
+              <Input
+                label="Work email"
+                placeholder="them@envolvepharm.com.ng"
+                value={email}
+                onChangeText={v => { setEmail(v); clear('email'); }}
+                error={errs.email}
+                keyboardType="email-address"
+                autoCapitalize="none"
+                autoCorrect={false}
+                editable={!busy}
+                required
+                leading={<Icon name="email" size={17} color={color.textTertiary} />}
+              />
+
+              <Input
+                label="Phone"
+                placeholder="Optional"
+                value={phone}
+                onChangeText={v => { setPhone(v); clear('phone'); }}
+                error={errs.phone}
+                keyboardType="phone-pad"
+                editable={!busy}
+                leading={<Icon name="phone" size={17} color={color.textTertiary} />}
+              />
+            </Animated.View>
+
+            {/* ── Role-specific ── */}
+            {role === 'STAFF' ? (
+              <Animated.View entering={FadeIn.duration(240)} style={{ gap: space.md }}>
+                <Text variant="overline" tone="tertiary">Employment</Text>
+                <Input
+                  label="Department"
+                  placeholder="e.g. Sales"
+                  value={department}
+                  onChangeText={setDepartment}
+                  autoCapitalize="words"
+                  editable={!busy}
+                />
+                <Input
+                  label="Job title"
+                  placeholder="e.g. Account Manager"
+                  value={jobTitle}
+                  onChangeText={setJobTitle}
+                  autoCapitalize="words"
+                  editable={!busy}
+                />
+              </Animated.View>
+            ) : (
+              <Animated.View entering={FadeIn.duration(240)} style={{ gap: space.md }}>
+                <Text variant="overline" tone="tertiary">Vehicle</Text>
+                <Input
+                  label="Plate number"
+                  placeholder="LAG-123-XY"
+                  value={plate}
+                  onChangeText={v => { setPlate(v); clear('plate'); }}
+                  error={errs.plate}
+                  autoCapitalize="characters"
+                  autoCorrect={false}
+                  editable={!busy}
+                  required
+                  leading={<Icon name="truck" size={17} color={color.textTertiary} />}
+                />
+                <Input
+                  label="Vehicle type"
+                  placeholder="e.g. Motorcycle, Van"
+                  value={vehicle}
+                  onChangeText={setVehicle}
+                  autoCapitalize="words"
+                  editable={!busy}
+                />
+                <Input
+                  label="Region"
+                  placeholder="e.g. Lagos Mainland"
+                  value={region}
+                  onChangeText={setRegion}
+                  autoCapitalize="words"
+                  editable={!busy}
+                  leading={<Icon name="location" size={17} color={color.textTertiary} />}
+                />
+              </Animated.View>
+            )}
+          </ScrollView>
+        </KeyboardAvoidingView>
+
+        <View
+          style={{
+            position: 'absolute', left: 0, right: 0, bottom: 0,
+            paddingHorizontal: gutter,
+            paddingTop: space.base,
+            paddingBottom: Math.max(insets.bottom, space.base),
+            backgroundColor: color.surface,
+            borderTopWidth: layout.hairlineWidth,
+            borderTopColor: color.border,
+          }}
+        >
+          <Button
+            size="lg"
+            fullWidth
+            loading={busy}
+            disabled={busy}
+            onPress={submit}
+            haptic="medium"
+          >
+            {busy ? 'Adding…' : `Add ${role === 'DRIVER' ? 'driver' : 'member'} & send invite`}
+          </Button>
         </View>
-
-        {/* Personal */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Personal Information</Text>
-          <Input label="First Name *"   placeholder="e.g. Chukwuemeka" value={firstName}  onChangeText={setFirstName}  error={errors.first_name} />
-          <Input label="Middle Name"    placeholder="Optional"          value={middleName} onChangeText={setMiddleName} />
-          <Input label="Last Name *"    placeholder="e.g. Okonkwo"     value={lastName}   onChangeText={setLastName}   error={errors.last_name} />
-          <Input label="Email Address *" placeholder="work@envolvepharma.com" value={email} onChangeText={setEmail} error={errors.email} keyboardType="email-address" autoCapitalize="none" />
-          <Input label="Phone Number"   placeholder="+234 800 000 0000" value={phone}      onChangeText={setPhone}      keyboardType="phone-pad" />
-        </View>
-
-        {/* Staff-specific */}
-        {role === 'STAFF' && (
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Work Details</Text>
-            <Input label="Gender"     placeholder="e.g. Male / Female"    value={gender}     onChangeText={setGender} />
-            <Input label="Department" placeholder="e.g. Procurement"       value={department} onChangeText={setDepartment} />
-            <Input label="Job Title"  placeholder="e.g. Senior Pharmacist" value={jobTitle}   onChangeText={setJobTitle} />
-          </View>
-        )}
-
-        {/* Driver-specific */}
-        {role === 'DRIVER' && (
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Driver Details</Text>
-            <Input label="Vehicle Plate" placeholder="e.g. LAG-123-AA"   value={vehiclePlate} onChangeText={setVehiclePlate} autoCapitalize="characters" />
-            <Input label="Vehicle Type"  placeholder="e.g. Motorcycle"   value={vehicleType}  onChangeText={setVehicleType} />
-            <Input label="Region / Zone" placeholder="e.g. Lagos Island" value={region}       onChangeText={setRegion} />
-          </View>
-        )}
-
-        {/* Info */}
-        <View style={styles.infoBox}>
-          <Text style={styles.infoText}>
-            A verification email will be sent to this address. The team member must click the link to verify and set their password before they can log in.
-          </Text>
-        </View>
-      </ScrollView>
-
-      <View style={[styles.footer, { paddingBottom: insets.bottom + 16 }]}>
-        <Button variant="primary" size="lg" fullWidth loading={createMember.isPending} onPress={handleSubmit}>
-          Add {role === 'DRIVER' ? 'Driver' : 'Staff Member'} & Send Invite
-        </Button>
-      </View>
-    </KeyboardAvoidingView>
+      </SafeAreaView>
+    </View>
   );
 }
-
-const styles = StyleSheet.create({
-  scroll:       { padding: 20, gap: 4 },
-  section:      { marginBottom: 24 },
-  sectionTitle: { ...type.h3, color: Colors.ink, marginBottom: 14 },
-
-  roleRow:  { flexDirection: 'row', gap: 12 },
-  roleCard: {
-    flex:            1,
-    backgroundColor: Colors.white,
-    borderRadius:    16,
-    padding:         16,
-    borderWidth:     2,
-    borderColor:     Colors.line,
-    gap:             6,
-    position:        'relative',
-  },
-  roleIcon:  { width: 44, height: 44, borderRadius: 13, alignItems: 'center', justifyContent: 'center', marginBottom: 4 },
-  roleLabel: { ...type.h4, color: Colors.ink },
-  roleDesc:  { ...type.caption, color: Colors.ink4, lineHeight: 17 },
-  roleCheck: {
-    position:       'absolute',
-    top:            10,
-    right:          10,
-    width:          20,
-    height:         20,
-    borderRadius:   10,
-    alignItems:     'center',
-    justifyContent: 'center',
-  },
-
-  infoBox: {
-    backgroundColor: Colors.tealLight,
-    borderRadius:    14,
-    padding:         14,
-    marginBottom:    16,
-    borderLeftWidth: 3,
-    borderLeftColor: Colors.teal,
-  },
-  infoText: { ...type.bodySm, color: Colors.teal, lineHeight: 20 },
-
-  footer: {
-    position: 'absolute', bottom: 0, left: 0, right: 0,
-    padding: 16, paddingTop: 12,
-    backgroundColor: Colors.white, borderTopWidth: 0.5, borderTopColor: Colors.line,
-  },
-});

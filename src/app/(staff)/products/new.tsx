@@ -1,437 +1,475 @@
 /**
- * Add Product screen.
+ * Add a product. ADMIN only.
  *
- * Image upload: uses expo-image-picker (run `npx expo install expo-image-picker`
- * if not yet installed, or it will be fetched automatically on EAS build).
+ * The SKU isn't asked for — the API derives it from the manufacturer and brand
+ * name and guarantees uniqueness. Letting someone type one invites collisions
+ * and inconsistent formats across a catalogue that's meant to be machine-
+ * sortable.
+ *
+ * Defaults to DRAFT. A product needs a price, an image and usually a stock
+ * receipt before it should be sellable, and none of those happen in one form
+ * on a phone. Activating is a deliberate second step on the detail screen —
+ * which is also where the API's zero-price guard is explained.
+ *
+ * Images aren't uploaded here. `POST /api/products/:sku/images` needs the SKU,
+ * which doesn't exist until this succeeds, so the flow is create → open → add
+ * images.
  */
 
-import React, { useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
+import { View, ScrollView, KeyboardAvoidingView, Platform } from 'react-native';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useRouter } from 'expo-router';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';
+
 import {
-  Alert,
-  Image,
-  KeyboardAvoidingView,
-  Platform,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native';
-import { router } from 'expo-router';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Colors } from '@/constants/colors';
-import { type } from '@/constants/typography';
-import { Icon } from '@/components/ui/Icon';
+  Text, Button, Input, Pressable, Icon, Surface, Badge,
+} from '@/components/ui';
 import { ScreenHeader } from '@/components/shared/ScreenHeader';
-import { Button } from '@/components/ui/Button';
-import { Input } from '@/components/ui/Input';
-import { api, ApiError } from '@/lib/api-client';
-import { API_BASE, MOBILE_HEADERS } from '@/constants/api';
-import { TokenStorage } from '@/lib/storage';
+import { color, space, radius, gutter, layout } from '@/constants/theme';
+import { formatNaira } from '@/lib/format';
+import { useAuth } from '@/contexts/AuthContext';
+import { listCategories, listManufacturers } from '@/lib/services/admin.service';
+import { apiFetch, ApiError } from '@/lib/api-client';
 import { toast } from '@/lib/toast';
 
-// Dynamic import for expo-image-picker.
-// Run `npx expo install expo-image-picker` to enable this feature.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-let ImagePicker: any = null;
-try {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  ImagePicker = require('expo-image-picker');
-} catch {
-  ImagePicker = null;
-}
-
-interface Category {
-  id:   number;
-  name: string;
-  slug: string;
-}
-interface CategoriesResponse { categories: Category[] }
-
-type ProductStatus = 'ACTIVE' | 'DRAFT' | 'DISCONTINUED';
-
-const STATUS_OPTIONS: { value: ProductStatus; label: string; desc: string; color: string }[] = [
-  { value: 'ACTIVE',       label: 'Active',       desc: 'Visible in catalog — customers can order',       color: Colors.success },
-  { value: 'DRAFT',        label: 'Draft',        desc: 'Hidden from catalog — not orderable yet',        color: Colors.ink3 },
-  { value: 'DISCONTINUED', label: 'Discontinued', desc: 'No longer sold — kept for order history',        color: Colors.danger },
-];
-
-export default function AddProduct() {
+export default function AddProductScreen() {
+  const router = useRouter();
   const insets = useSafeAreaInsets();
-  const qc     = useQueryClient();
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
 
-  // Form fields
-  const [brandName,            setBrandName]            = useState('');
-  const [genericName,          setGenericName]          = useState('');
-  const [strength,             setStrength]             = useState('');
-  const [manufacturer,         setManufacturer]         = useState('');
-  const [costPrice,            setCostPrice]            = useState('');
-  const [sellingPrice,         setSellingPrice]         = useState('');
-  const [initialStock,         setInitialStock]         = useState('');
-  const [minOrderQty,          setMinOrderQty]          = useState('1');
-  const [requiresPrescription, setRequiresPrescription] = useState(false);
-  const [categoryId,           setCategoryId]           = useState<number | null>(null);
-  const [status,               setStatus]               = useState<ProductStatus>('ACTIVE');
-  const [errors,               setErrors]               = useState<Record<string, string>>({});
+  const isAdmin = user?.role === 'ADMIN';
 
-  // Image
-  const [imageUri,   setImageUri]   = useState<string | null>(null);
-  const [imageFile,  setImageFile]  = useState<{ uri: string; name: string; type: string } | null>(null);
-  const [uploading,  setUploading]  = useState(false);
-  const [uploadedUrl, setUploadedUrl] = useState<string | null>(null);
+  const [brand,    setBrand]    = useState('');
+  const [generic,  setGeneric]  = useState('');
+  const [strength, setStrength] = useState('');
+  const [packSize, setPackSize] = useState('');
+  const [perCarton, setPerCarton] = useState('');
 
-  const { data: catData } = useQuery({
-    queryKey: ['product-categories'],
-    queryFn:  () => api.get<CategoriesResponse>('/api/products/categories'),
+  const [categoryId,     setCategoryId]     = useState<number | null>(null);
+  const [manufacturerId, setManufacturerId] = useState<number | null>(null);
+
+  const [price,    setPrice]    = useState('');
+  const [minOrder, setMinOrder] = useState('1');
+  const [minStock, setMinStock] = useState('0');
+  const [reorder,  setReorder]  = useState('0');
+  const [shelf,    setShelf]    = useState('');
+
+  const [busy, setBusy] = useState(false);
+  const [errs, setErrs] = useState<Record<string, string>>({});
+
+  const clear = (k: string) => setErrs(p => ({ ...p, [k]: '' }));
+
+  const categoriesQ = useQuery({
+    queryKey: ['products', 'categories'],
+    queryFn:  listCategories,
+    enabled:  isAdmin,
+    staleTime: 5 * 60_000,
   });
-  const categories = catData?.categories ?? [];
 
-  // ── Image picker ──────────────────────────────────────────────────────────
-  async function pickImage() {
-    if (!ImagePicker) {
-      Alert.alert(
-        'Package required',
-        'Run `npx expo install expo-image-picker` to enable image upload.',
-      );
-      return;
-    }
+  const manufacturersQ = useQuery({
+    queryKey: ['products', 'manufacturers'],
+    queryFn:  listManufacturers,
+    enabled:  isAdmin,
+    staleTime: 5 * 60_000,
+  });
 
-    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!perm.granted) {
-      Alert.alert('Permission needed', 'Please allow photo library access in Settings.');
-      return;
-    }
+  const validate = useCallback(() => {
+    const e: Record<string, string> = {};
+    if (brand.trim().length   < 1) e.brand   = 'Brand name is required.';
+    if (generic.trim().length < 1) e.generic = 'Generic name is required.';
 
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions?.Images ?? 'images',
-      allowsEditing: true,
-      aspect: [1, 1],
-      quality: 0.85,
-    });
+    // The API requires a positive selling_price on create, so an empty or zero
+    // price fails server-side — catch it here with a useful message.
+    const p = parseFloat(price);
+    if (!price.trim())                  e.price = 'A selling price is required.';
+    else if (!Number.isFinite(p) || p <= 0) e.price = 'Enter a price greater than zero.';
 
-    if (!result.canceled && result.assets[0]) {
-      const asset = result.assets[0];
-      setImageUri(asset.uri);
-      const ext  = asset.uri.split('.').pop() ?? 'jpg';
-      const name = `product-${Date.now()}.${ext}`;
-      setImageFile({ uri: asset.uri, name, type: `image/${ext}` });
-    }
-  }
+    const mo = parseInt(minOrder, 10);
+    if (!Number.isFinite(mo) || mo < 1) e.minOrder = 'Minimum order must be at least 1.';
 
-  async function uploadImage(uri: string, name: string, mimeType: string): Promise<string> {
-    const token = await TokenStorage.getAccess();
-    const form  = new FormData();
-    form.append('file', { uri, name, type: mimeType } as any);
+    setErrs(e);
+    return Object.keys(e).length === 0;
+  }, [brand, generic, price, minOrder]);
 
-    const res = await fetch(`${API_BASE}/api/products/upload-image`, {
-      method:  'POST',
-      headers: {
-        ...MOBILE_HEADERS,
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        'Content-Type': 'multipart/form-data',
-      },
-      body: form,
-    });
-    if (!res.ok) throw new Error('Image upload failed');
-    const json = await res.json();
-    return json.data?.url ?? json.url ?? '';
-  }
+  const submit = useCallback(async () => {
+    if (busy || !validate()) return;
 
-  // ── Create product ────────────────────────────────────────────────────────
-  const createProduct = useMutation({
-    mutationFn: async () => {
-      let imageUrl = uploadedUrl;
+    setBusy(true);
+    try {
+      const res = await apiFetch<{ product: { sku: string } }>('/api/products', {
+        method: 'POST',
+        body: JSON.stringify({
+          brand_name:          brand.trim(),
+          generic_name:        generic.trim(),
+          product_strength:    strength.trim() || undefined,
+          pack_size:           packSize.trim() || undefined,
+          quantity_per_carton: perCarton ? parseInt(perCarton, 10) : undefined,
+          category_id:         categoryId ?? undefined,
+          manufacturer_id:     manufacturerId ?? undefined,
+          selling_price:       parseFloat(price),
+          minimum_order:       parseInt(minOrder, 10),
+          minimum_stock_level: parseInt(minStock, 10) || 0,
+          reorder_quantity:    parseInt(reorder, 10) || 0,
+          shelf_location:      shelf.trim() || undefined,
+          // Deliberate: a new product isn't sellable until it has images and
+          // stock, both of which happen after this form.
+          status: 'DRAFT',
+        }),
+      });
 
-      if (imageFile && !uploadedUrl) {
-        setUploading(true);
-        try {
-          imageUrl = await uploadImage(imageFile.uri, imageFile.name, imageFile.type);
-          setUploadedUrl(imageUrl);
-        } finally {
-          setUploading(false);
-        }
+      await queryClient.invalidateQueries({ queryKey: ['products'] });
+      toast.success(`${brand.trim()} created as a draft.`, 'Product added');
+
+      // Straight to the detail screen — that's where images and activation live.
+      if (res?.product?.sku) {
+        router.replace(`/(staff)/products/${encodeURIComponent(res.product.sku)}` as never);
+      } else {
+        router.back();
       }
-
-      const body: Record<string, unknown> = {
-        brand_name:             brandName.trim(),
-        generic_name:           genericName.trim()  || undefined,
-        product_strength:       strength.trim()     || undefined,
-        manufacturer:           manufacturer.trim() || undefined,
-        selling_price:          parseFloat(sellingPrice),
-        status,
-        requires_prescription:  requiresPrescription,
-      };
-      if (costPrice)    body.cost_price    = parseFloat(costPrice);
-      if (initialStock) body.initial_stock = parseInt(initialStock, 10);
-      if (minOrderQty)  body.minimum_order = parseInt(minOrderQty, 10);
-      if (categoryId)   body.category_id   = categoryId;
-      if (imageUrl)     body.image_url     = imageUrl;
-
-      return api.post<{ product: { id: number; sku: string } }>('/api/products', body);
-    },
-    onSuccess: (res) => {
-      qc.invalidateQueries({ queryKey: ['staff-products'] });
-      const sku = (res as any)?.product?.sku ?? '';
-      toast.success(`Product created${sku ? ` · SKU: ${sku}` : ''}.`, '✅ Product Created');
-      router.back();
-    },
-    onError: (e) => {
-      toast.error(e instanceof ApiError ? e.message : 'Failed to create product.');
-    },
-  });
-
-  function validate(): boolean {
-    const errs: Record<string, string> = {};
-    if (!brandName.trim())   errs.brandName    = 'Brand name is required.';
-    if (!sellingPrice.trim()) errs.sellingPrice = 'Selling price is required.';
-    else if (isNaN(parseFloat(sellingPrice)) || parseFloat(sellingPrice) <= 0) {
-      errs.sellingPrice = 'Enter a valid price greater than 0.';
+    } catch (err) {
+      const e = err as ApiError;
+      if (e.errors) {
+        setErrs({
+          brand:    e.errors.brand_name?.[0] ?? '',
+          generic:  e.errors.generic_name?.[0] ?? '',
+          price:    e.errors.selling_price?.[0] ?? '',
+          minOrder: e.errors.minimum_order?.[0] ?? '',
+        });
+        toast.error('Check the highlighted fields.', 'Couldn’t add product');
+      } else {
+        toast.error(e.message, 'Couldn’t add product');
+      }
+      setBusy(false);
     }
-    if (costPrice && (isNaN(parseFloat(costPrice)) || parseFloat(costPrice) < 0)) {
-      errs.costPrice = 'Enter a valid cost price.';
-    }
-    if (initialStock && isNaN(parseInt(initialStock, 10))) {
-      errs.initialStock = 'Enter a valid stock quantity.';
-    }
-    setErrors(errs);
-    return Object.keys(errs).length === 0;
+  }, [busy, validate, brand, generic, strength, packSize, perCarton,
+      categoryId, manufacturerId, price, minOrder, minStock, reorder, shelf,
+      queryClient, router]);
+
+  const previewPrice = useMemo(() => {
+    const p = parseFloat(price);
+    return Number.isFinite(p) && p > 0 ? formatNaira(p) : null;
+  }, [price]);
+
+  if (!isAdmin) {
+    return (
+      <View style={{ flex: 1, backgroundColor: color.bg }}>
+        <SafeAreaView style={{ flex: 1 }} edges={['top']}>
+          <ScreenHeader variant="compact" back title="Add product" />
+          <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: gutter, gap: space.md }}>
+            <Icon name="lock" size={30} color={color.textDisabled} />
+            <Text variant="title3" align="center">Admins only</Text>
+            <Text variant="callout" tone="tertiary" align="center">
+              Products are managed by administrators. You have read access to the
+              catalogue.
+            </Text>
+          </View>
+        </SafeAreaView>
+      </View>
+    );
   }
-
-  function handleSubmit() {
-    if (!validate()) return;
-    createProduct.mutate();
-  }
-
-  const isBusy = uploading || createProduct.isPending;
 
   return (
-    <KeyboardAvoidingView
-      style={{ flex: 1, backgroundColor: Colors.bg }}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-    >
-      <ScreenHeader title="Add Product" back onBack={() => router.back()} />
+    <View style={{ flex: 1, backgroundColor: color.bg }}>
+      <SafeAreaView style={{ flex: 1 }} edges={['top']}>
+        <ScreenHeader
+          variant="compact"
+          back
+          title="Add product"
+          subtitle="Saved as a draft"
+        />
 
-      <ScrollView
-        contentContainerStyle={[styles.scroll, { paddingBottom: insets.bottom + 110 }]}
-        keyboardShouldPersistTaps="handled"
-        showsVerticalScrollIndicator={false}
-      >
-        {/* Product image */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Product Photo</Text>
-          <Pressable style={styles.imagePicker} onPress={pickImage}>
-            {imageUri ? (
-              <>
-                <Image source={{ uri: imageUri }} style={styles.imagePreview} />
-                <View style={styles.changeOverlay}>
-                  <Icon name="edit" size={18} color={Colors.white} />
-                  <Text style={styles.changeText}>Change</Text>
-                </View>
-              </>
-            ) : (
-              <View style={styles.imagePlaceholder}>
-                <View style={styles.imagePlaceholderIcon}>
-                  <Icon name="image" size={28} color={Colors.ink4} />
-                </View>
-                <Text style={styles.imagePlaceholderText}>Tap to add photo</Text>
-                <Text style={styles.imagePlaceholderSub}>JPG or PNG · Square crop recommended</Text>
-              </View>
-            )}
-          </Pressable>
-          {uploading && (
-            <View style={styles.uploadingRow}>
-              <Icon name="upload" size={14} color={Colors.brand} />
-              <Text style={styles.uploadingText}>Uploading image…</Text>
-            </View>
-          )}
-        </View>
-
-        {/* Basic info */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Product Info</Text>
-          <Input label="Brand Name *"       placeholder="e.g. Panadol Extra"            value={brandName}    onChangeText={setBrandName}    error={errors.brandName} />
-          <Input label="Generic / Active Ingredient" placeholder="e.g. Paracetamol + Caffeine" value={genericName}  onChangeText={setGenericName} />
-          <Input label="Strength / Dosage"  placeholder="e.g. 500mg/65mg"               value={strength}     onChangeText={setStrength} />
-          <Input label="Manufacturer"       placeholder="e.g. GlaxoSmithKline"          value={manufacturer} onChangeText={setManufacturer} />
-        </View>
-
-        {/* Pricing */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Pricing</Text>
-          <Input label="Selling Price (₦) *"           placeholder="0.00"                           value={sellingPrice} onChangeText={setSellingPrice} keyboardType="decimal-pad" error={errors.sellingPrice} />
-          <Input label="Cost Price (₦)"                placeholder="0.00 — internal only"            value={costPrice}    onChangeText={setCostPrice}    keyboardType="decimal-pad" error={errors.costPrice} />
-        </View>
-
-        {/* Inventory */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Inventory</Text>
-          <Input label="Initial Stock Quantity" placeholder="0"  value={initialStock} onChangeText={setInitialStock} keyboardType="number-pad" error={errors.initialStock} />
-          <Input label="Minimum Order Quantity" placeholder="1"  value={minOrderQty}  onChangeText={setMinOrderQty}  keyboardType="number-pad" />
-        </View>
-
-        {/* Category */}
-        {categories.length > 0 && (
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Category</Text>
-            <View style={styles.chipRow}>
-              {categories.map(cat => (
-                <Pressable
-                  key={cat.id}
-                  style={[styles.chip, categoryId === cat.id && styles.chipActive]}
-                  onPress={() => setCategoryId(categoryId === cat.id ? null : cat.id)}
-                >
-                  <Text style={[styles.chipText, categoryId === cat.id && styles.chipTextActive]}>
-                    {cat.name}
+        <KeyboardAvoidingView
+          style={{ flex: 1 }}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          keyboardVerticalOffset={insets.top + 56}
+        >
+          <ScrollView
+            contentContainerStyle={{ padding: gutter, gap: space.xl, paddingBottom: 160 }}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+          >
+            <Animated.View entering={FadeInDown.duration(320)}>
+              <Surface tone="subtle" level="none" padded="base" rounded="lg">
+                <View style={{ flexDirection: 'row', gap: space.sm }}>
+                  <Icon name="info" size={16} color={color.accent} filled />
+                  <Text variant="caption" tone="secondary" style={{ flex: 1 }}>
+                    The SKU is generated for you from the manufacturer and brand
+                    name. Add images and stock on the next screen, then activate it.
                   </Text>
-                </Pressable>
-              ))}
-            </View>
-          </View>
-        )}
+                </View>
+              </Surface>
+            </Animated.View>
 
-        {/* Prescription toggle */}
-        <View style={styles.section}>
-          <Pressable style={styles.toggleRow} onPress={() => setRequiresPrescription(v => !v)}>
-            <View style={[styles.toggleIconWrap, { backgroundColor: requiresPrescription ? Colors.warning + '20' : Colors.bgMuted }]}>
-              <Icon name="clipboard" size={18} color={requiresPrescription ? Colors.warning : Colors.ink4} />
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.toggleLabel}>Requires Prescription</Text>
-              <Text style={styles.toggleSub}>Customers are warned before adding to cart</Text>
-            </View>
-            <View style={[styles.toggleWrap, requiresPrescription && styles.toggleWrapOn]}>
-              <View style={[styles.toggleKnob, requiresPrescription && styles.toggleKnobOn]} />
-            </View>
-          </Pressable>
-        </View>
-
-        {/* Status */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Status</Text>
-          {STATUS_OPTIONS.map(opt => (
-            <Pressable
-              key={opt.value}
-              style={[styles.statusOption, status === opt.value && { borderColor: opt.color, backgroundColor: opt.color + '08' }]}
-              onPress={() => setStatus(opt.value)}
-            >
-              <View style={[styles.statusDot, { backgroundColor: opt.color }]} />
-              <View style={{ flex: 1 }}>
-                <Text style={[styles.statusLabel, status === opt.value && { color: opt.color }]}>{opt.label}</Text>
-                <Text style={styles.statusDesc}>{opt.desc}</Text>
+            {/* ── Identity ── */}
+            <Group index={0} title="Identity">
+              <Input
+                label="Brand name"
+                placeholder="e.g. Panadol Extra"
+                value={brand}
+                onChangeText={v => { setBrand(v); clear('brand'); }}
+                error={errs.brand}
+                autoCapitalize="words"
+                editable={!busy}
+                required
+              />
+              <Input
+                label="Generic name"
+                placeholder="e.g. Paracetamol + Caffeine"
+                value={generic}
+                onChangeText={v => { setGeneric(v); clear('generic'); }}
+                error={errs.generic}
+                autoCapitalize="words"
+                editable={!busy}
+                required
+              />
+              <View style={{ flexDirection: 'row', gap: space.md }}>
+                <Input
+                  label="Strength"
+                  placeholder="500mg"
+                  value={strength}
+                  onChangeText={setStrength}
+                  editable={!busy}
+                  containerStyle={{ flex: 1 }}
+                />
+                <Input
+                  label="Pack size"
+                  placeholder="24 tablets"
+                  value={packSize}
+                  onChangeText={setPackSize}
+                  editable={!busy}
+                  containerStyle={{ flex: 1 }}
+                />
               </View>
-              {status === opt.value && <Icon name="check-circle" size={18} color={opt.color} />}
-            </Pressable>
-          ))}
-        </View>
-      </ScrollView>
+            </Group>
 
-      {/* Footer */}
-      <View style={[styles.footer, { paddingBottom: insets.bottom + 16 }]}>
-        <Button variant="primary" size="lg" fullWidth loading={isBusy} onPress={handleSubmit}>
-          {uploading ? 'Uploading image…' : 'Create Product'}
-        </Button>
-      </View>
-    </KeyboardAvoidingView>
+            {/* ── Classification ── */}
+            <Group index={1} title="Classification">
+              <Picker
+                label="Category"
+                options={(categoriesQ.data?.categories ?? []).map(c => ({ id: c.id, name: c.name }))}
+                selected={categoryId}
+                onSelect={setCategoryId}
+                loading={categoriesQ.isLoading}
+                disabled={busy}
+                emptyHint="No categories yet — add them from the web console."
+              />
+              <Picker
+                label="Manufacturer"
+                options={(manufacturersQ.data?.manufacturers ?? []).map(m => ({ id: m.id, name: m.name }))}
+                selected={manufacturerId}
+                onSelect={setManufacturerId}
+                loading={manufacturersQ.isLoading}
+                disabled={busy}
+                emptyHint="No manufacturers yet — add them from the web console."
+              />
+            </Group>
+
+            {/* ── Commercial ── */}
+            <Group index={2} title="Pricing & stock">
+              <Input
+                label="Selling price"
+                hint="Per pack. Required — a product with no price can’t be activated."
+                placeholder="0"
+                value={price}
+                onChangeText={v => { setPrice(v); clear('price'); }}
+                error={errs.price}
+                keyboardType="decimal-pad"
+                editable={!busy}
+                required
+                leading={<Text variant="callout" tone="tertiary">₦</Text>}
+              />
+
+              <View style={{ flexDirection: 'row', gap: space.md }}>
+                <Input
+                  label="Minimum order"
+                  hint="Packs"
+                  value={minOrder}
+                  onChangeText={v => { setMinOrder(v); clear('minOrder'); }}
+                  error={errs.minOrder}
+                  keyboardType="number-pad"
+                  editable={!busy}
+                  required
+                  containerStyle={{ flex: 1 }}
+                />
+                <Input
+                  label="Per carton"
+                  hint="Optional"
+                  value={perCarton}
+                  onChangeText={setPerCarton}
+                  keyboardType="number-pad"
+                  editable={!busy}
+                  containerStyle={{ flex: 1 }}
+                />
+              </View>
+
+              <View style={{ flexDirection: 'row', gap: space.md }}>
+                <Input
+                  label="Reorder level"
+                  hint="Flags as low"
+                  value={minStock}
+                  onChangeText={setMinStock}
+                  keyboardType="number-pad"
+                  editable={!busy}
+                  containerStyle={{ flex: 1 }}
+                />
+                <Input
+                  label="Reorder qty"
+                  hint="Suggested"
+                  value={reorder}
+                  onChangeText={setReorder}
+                  keyboardType="number-pad"
+                  editable={!busy}
+                  containerStyle={{ flex: 1 }}
+                />
+              </View>
+
+              <Input
+                label="Shelf location"
+                placeholder="e.g. A3-04"
+                value={shelf}
+                onChangeText={setShelf}
+                autoCapitalize="characters"
+                editable={!busy}
+              />
+            </Group>
+
+            {/* ── Preview ── */}
+            {brand.trim() ? (
+              <Animated.View entering={FadeIn.duration(240)} style={{ gap: space.sm }}>
+                <Text variant="overline" tone="tertiary">Preview</Text>
+                <Surface level="sm" padded="base" rounded="lg">
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.md }}>
+                    <View style={{
+                      width: 46, height: 46, borderRadius: radius.md,
+                      backgroundColor: color.surfaceSubtle,
+                      alignItems: 'center', justifyContent: 'center',
+                    }}>
+                      <Icon name="product" size={18} color={color.textDisabled} />
+                    </View>
+                    <View style={{ flex: 1, gap: 2 }}>
+                      <Text variant="bodyMedium" numberOfLines={1}>{brand.trim()}</Text>
+                      <Text variant="caption" tone="tertiary" numberOfLines={1}>
+                        {[generic.trim(), strength.trim(), packSize.trim()]
+                          .filter(Boolean).join(' · ') || 'No details yet'}
+                      </Text>
+                      <View style={{ flexDirection: 'row', gap: space.sm, marginTop: 2 }}>
+                        <Badge tone="warning" size="sm" dot>draft</Badge>
+                      </View>
+                    </View>
+                    <Text variant="bodyMedium" tone={previewPrice ? 'default' : 'disabled'}>
+                      {previewPrice ?? '—'}
+                    </Text>
+                  </View>
+                </Surface>
+              </Animated.View>
+            ) : null}
+          </ScrollView>
+        </KeyboardAvoidingView>
+
+        <View
+          style={{
+            position: 'absolute', left: 0, right: 0, bottom: 0,
+            paddingHorizontal: gutter,
+            paddingTop: space.base,
+            paddingBottom: Math.max(insets.bottom, space.base),
+            backgroundColor: color.surface,
+            borderTopWidth: layout.hairlineWidth,
+            borderTopColor: color.border,
+          }}
+        >
+          <Button
+            size="lg"
+            fullWidth
+            loading={busy}
+            disabled={busy}
+            onPress={submit}
+            haptic="medium"
+          >
+            {busy ? 'Creating…' : 'Create draft product'}
+          </Button>
+        </View>
+      </SafeAreaView>
+    </View>
   );
 }
 
-const styles = StyleSheet.create({
-  scroll:       { padding: 20, gap: 4 },
-  section:      { marginBottom: 24 },
-  sectionTitle: { ...type.h3, color: Colors.ink, marginBottom: 14 },
+/* ── Bits ───────────────────────────────────────────────────────────────── */
 
-  imagePicker: {
-    height:          180,
-    borderRadius:    16,
-    overflow:        'hidden',
-    backgroundColor: Colors.white,
-    borderWidth:     1.5,
-    borderColor:     Colors.line,
-    borderStyle:     'dashed',
-  },
-  imagePreview:     { width: '100%', height: '100%' },
-  changeOverlay: {
-    position:       'absolute',
-    bottom:         12,
-    right:          12,
-    flexDirection:  'row',
-    alignItems:     'center',
-    gap:            6,
-    backgroundColor: 'rgba(0,0,0,0.55)',
-    borderRadius:   10,
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-  },
-  changeText:  { ...type.label, color: Colors.white },
-  imagePlaceholder: {
-    flex:           1,
-    alignItems:     'center',
-    justifyContent: 'center',
-    gap:            6,
-  },
-  imagePlaceholderIcon: {
-    width:           64,
-    height:          64,
-    borderRadius:    18,
-    backgroundColor: Colors.bgMuted,
-    alignItems:      'center',
-    justifyContent:  'center',
-    marginBottom:    4,
-  },
-  imagePlaceholderText: { ...type.bodyMed, color: Colors.ink3 },
-  imagePlaceholderSub:  { ...type.caption, color: Colors.ink4 },
-  uploadingRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 8 },
-  uploadingText: { ...type.caption, color: Colors.brand },
+function Group({ index, title, children }: {
+  index: number; title: string; children: React.ReactNode;
+}) {
+  return (
+    <Animated.View entering={FadeInDown.delay(60 + index * 60).duration(320)} style={{ gap: space.md }}>
+      <Text variant="overline" tone="tertiary">{title}</Text>
+      <View style={{ gap: space.md }}>{children}</View>
+    </Animated.View>
+  );
+}
 
-  chipRow:        { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  chip:           { paddingHorizontal: 14, paddingVertical: 9, borderRadius: 12, backgroundColor: Colors.white, borderWidth: 1.5, borderColor: Colors.line },
-  chipActive:     { borderColor: Colors.brand, backgroundColor: Colors.brandLight },
-  chipText:       { ...type.label, color: Colors.ink3 },
-  chipTextActive: { color: Colors.brand },
+/**
+ * Horizontal chip picker. Better than a modal dropdown for lists of this size —
+ * the options stay visible while the rest of the form is filled in, and one tap
+ * selects rather than three (open, scroll, pick).
+ */
+function Picker({
+  label, options, selected, onSelect, loading, disabled, emptyHint,
+}: {
+  label: string;
+  options: { id: number; name: string }[];
+  selected: number | null;
+  onSelect: (id: number | null) => void;
+  loading: boolean;
+  disabled: boolean;
+  emptyHint: string;
+}) {
+  return (
+    <View style={{ gap: space.sm }}>
+      <Text variant="label" tone="secondary">{label}</Text>
 
-  toggleRow: {
-    flexDirection:   'row',
-    alignItems:      'center',
-    backgroundColor: Colors.white,
-    borderRadius:    16,
-    padding:         16,
-    gap:             14,
-    borderWidth:     1,
-    borderColor:     Colors.line,
-  },
-  toggleIconWrap: { width: 40, height: 40, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
-  toggleLabel:    { ...type.bodyMed, color: Colors.ink },
-  toggleSub:      { ...type.caption, color: Colors.ink4, marginTop: 2 },
-  toggleWrap:     { width: 48, height: 28, borderRadius: 14, backgroundColor: Colors.line, padding: 2, justifyContent: 'center' },
-  toggleWrapOn:   { backgroundColor: Colors.success },
-  toggleKnob:     { width: 24, height: 24, borderRadius: 12, backgroundColor: Colors.white, shadowColor: '#000', shadowOpacity: 0.15, shadowRadius: 4, elevation: 2 },
-  toggleKnobOn:   { alignSelf: 'flex-end' },
-
-  statusOption: {
-    flexDirection:   'row',
-    alignItems:      'center',
-    backgroundColor: Colors.white,
-    borderRadius:    14,
-    padding:         14,
-    gap:             12,
-    marginBottom:    8,
-    borderWidth:     1.5,
-    borderColor:     Colors.line,
-  },
-  statusDot:   { width: 10, height: 10, borderRadius: 5 },
-  statusLabel: { ...type.bodyMed, color: Colors.ink },
-  statusDesc:  { ...type.caption, color: Colors.ink4, marginTop: 2 },
-
-  footer: {
-    position:        'absolute',
-    bottom:          0,
-    left:            0,
-    right:           0,
-    padding:         16,
-    paddingTop:      12,
-    backgroundColor: Colors.white,
-    borderTopWidth:  0.5,
-    borderTopColor:  Colors.line,
-  },
-});
+      {loading ? (
+        <Text variant="caption" tone="disabled">Loading…</Text>
+      ) : options.length === 0 ? (
+        <Text variant="caption" tone="disabled">{emptyHint}</Text>
+      ) : (
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+          contentContainerStyle={{ gap: space.sm }}
+        >
+          {options.map(o => {
+            const active = selected === o.id;
+            return (
+              <Pressable
+                key={o.id}
+                onPress={() => onSelect(active ? null : o.id)}
+                disabled={disabled}
+                haptic="light"
+                pressScale={0.95}
+                accessibilityRole="button"
+                accessibilityState={{ selected: active }}
+                style={{
+                  paddingHorizontal: space.base, height: 34,
+                  justifyContent: 'center', borderRadius: radius.full,
+                  backgroundColor: active ? color.brandSoft : color.surface,
+                  borderWidth: active ? 1.5 : layout.hairlineWidth,
+                  borderColor: active ? color.brand : color.border,
+                }}
+              >
+                <Text variant="caption" style={{
+                  color: active ? color.brand : color.textSecondary,
+                  fontWeight: active ? '700' : '500',
+                }}>
+                  {o.name}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </ScrollView>
+      )}
+    </View>
+  );
+}

@@ -1,311 +1,552 @@
-import React, { useState } from 'react';
+/**
+ * Customer detail — console.
+ *
+ * The review decision lives at the top when there is one to make, because
+ * that's the only reason most people open this screen. Once approved, the
+ * review block collapses into a line of provenance ("approved by X on Y") and
+ * the rest of the record takes over.
+ *
+ * Rejection requires a note. The customer is told why, and "rejected" with no
+ * reason produces a support call that costs more than typing the reason did.
+ * Approval doesn't require one — there's nothing to explain.
+ *
+ * Assigning a sales rep is ADMIN-only, matching the API. Staff see who owns the
+ * account but get no picker, rather than a picker that 403s.
+ */
+
+import React, { useCallback, useState } from 'react';
+import { View, ScrollView, RefreshControl, Linking } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { useLocalSearchParams, useRouter } from 'expo-router';
+import * as WebBrowser from 'expo-web-browser';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';
+
 import {
-  Alert,
-  Linking,
-  Pressable,
-  RefreshControl,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from 'react-native';
-import { useLocalSearchParams } from 'expo-router';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Colors } from '@/constants/colors';
+  Text, Button, Input, Pressable, Icon, Surface, Badge, Skeleton, EmptyState,
+} from '@/components/ui';
 import { ScreenHeader } from '@/components/shared/ScreenHeader';
-import { StatusBadge } from '@/components/ui/Badge';
-import { Button } from '@/components/ui/Button';
-import { Skeleton } from '@/components/ui/Skeleton';
+import { color, space, radius, gutter, layout } from '@/constants/theme';
 import { formatDate } from '@/lib/format';
-import { api, ApiError } from '@/lib/api-client';
+import { useAuth } from '@/contexts/AuthContext';
+import {
+  getCustomer, reviewCustomer, assignStaff, getPcnUrl, listStaff,
+  type CustomerStatus,
+} from '@/lib/services/admin.service';
 import { toast } from '@/lib/toast';
+import type { IconName } from '@/components/ui/Icon';
 
-// GET /api/customers/:id returns the customer object directly in `data`
-interface CustomerDetail {
-  id:                  number;
-  status:              string;
-  company_name:        string | null;
-  address:             string | null;
-  city:                string | null;
-  state:               string | null;
-  pcn_certificate_url: string | null;
-  pcn_verified:        boolean;
-  review_note:         string | null;
-  reviewed_at:         string | null;
-  created_at:          string;
-  order_count:         number;
-  user: {
-    first_name: string;
-    last_name:  string;
-    email:      string;
-    phone:      string | null;
-  };
-  reviewed_by: { name: string; email: string } | null;
-}
+const STATUS_TONE: Record<CustomerStatus, 'success' | 'warning' | 'danger' | 'neutral'> = {
+  APPROVED:          'success',
+  PENDING_REVIEW:    'warning',
+  PCN_CERT_UPLOADED: 'neutral',
+  OTP_CONFIRMED:     'neutral',
+  REGISTERED:        'neutral',
+  REJECTED:          'danger',
+};
 
-export default function CustomerDetailScreen() {
-  const { id }  = useLocalSearchParams<{ id: string }>();
-  const insets  = useSafeAreaInsets();
-  const qc      = useQueryClient();
+const STATUS_LABEL: Record<CustomerStatus, string> = {
+  APPROVED:          'approved',
+  PENDING_REVIEW:    'awaiting review',
+  PCN_CERT_UPLOADED: 'certificate uploaded',
+  OTP_CONFIRMED:     'email confirmed',
+  REGISTERED:        'registered',
+  REJECTED:          'rejected',
+};
 
-  const [rejectNote, setRejectNote]           = useState('');
-  const [showRejectInput, setShowRejectInput] = useState(false);
+/**
+ * Anything before APPROVED/REJECTED is still in flight. A certificate that's
+ * been uploaded but not yet moved to PENDING_REVIEW is still reviewable, so
+ * both states offer the decision.
+ */
+const REVIEWABLE: CustomerStatus[] = [
+  'REGISTERED', 'OTP_CONFIRMED', 'PCN_CERT_UPLOADED', 'PENDING_REVIEW',
+];
 
-  // api-client unwraps .data — the customer IS the data, no { customer } wrapper
-  const { data: customer, isLoading, refetch, isRefetching } = useQuery({
-    queryKey: ['staff-customer', id],
-    queryFn:  () => api.get<CustomerDetail>(`/api/customers/${id}`),
+export default function ConsoleCustomerDetailScreen() {
+  const { id } = useLocalSearchParams<{ id: string }>();
+  const router = useRouter();
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
+
+  const isAdmin = user?.role === 'ADMIN';
+
+  const [busy,        setBusy]        = useState(false);
+  const [rejecting,   setRejecting]   = useState(false);
+  const [reason,      setReason]      = useState('');
+  const [assignOpen,  setAssignOpen]  = useState(false);
+
+  const customerId = Number(id);
+
+  const { data, isLoading, isError, refetch, isRefetching } = useQuery({
+    queryKey: ['customers', 'detail', customerId],
+    queryFn:  () => getCustomer(customerId),
+    enabled:  Number.isFinite(customerId),
   });
 
-  const reviewMutation = useMutation({
-    mutationFn: (payload: { decision: 'approve' | 'reject'; review_note?: string }) =>
-      api.patch(`/api/customers/${id}/review`, payload),
-    onSuccess: (_, vars) => {
-      qc.invalidateQueries({ queryKey: ['staff-customer', id] });
-      qc.invalidateQueries({ queryKey: ['staff-customers'] });
-      setShowRejectInput(false);
-      setRejectNote('');
-      toast.success(
-        vars.decision === 'approve'
-          ? 'Customer approved and notified by email.'
-          : 'Customer rejected and notified by email.',
-        vars.decision === 'approve' ? 'Approved ✅' : 'Rejected',
-      );
-    },
-    onError: (e) => {
-      toast.error(e instanceof ApiError ? e.message : 'Action failed. Please try again.');
-    },
+  const repsQ = useQuery({
+    queryKey: ['staff', 'reps'],
+    queryFn:  () => listStaff({ role: 'STAFF', limit: 100 }),
+    enabled:  isAdmin && assignOpen,
+    staleTime: 5 * 60_000,
   });
 
-  function handleApprove() {
-    Alert.alert(
-      'Approve Customer',
-      `Approve ${customer?.user?.first_name} ${customer?.user?.last_name}?`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Approve', onPress: () => reviewMutation.mutate({ decision: 'approve' }) },
-      ],
-    );
-  }
+  const customer = data?.customer;
 
-  function handleReject() {
-    if (!rejectNote.trim()) {
-      toast.error('Please enter a reason for rejection.');
+  const invalidate = useCallback(async () => {
+    await queryClient.invalidateQueries({ queryKey: ['customers'] });
+  }, [queryClient]);
+
+  const decide = useCallback(async (status: 'APPROVED' | 'REJECTED') => {
+    if (!customer || busy) return;
+    if (status === 'REJECTED' && reason.trim().length < 4) {
+      toast.error('Tell them why — it saves a support call later.', 'Reason required');
       return;
     }
-    Alert.alert(
-      'Reject Customer',
-      'The customer will be notified with your reason.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Reject', style: 'destructive', onPress: () => reviewMutation.mutate({ decision: 'reject', review_note: rejectNote.trim() }) },
-      ],
+    setBusy(true);
+    try {
+      await reviewCustomer(customer.id, {
+        status,
+        review_note: status === 'REJECTED' ? reason.trim() : undefined,
+      });
+      await invalidate();
+      setRejecting(false);
+      setReason('');
+      toast.success(
+        status === 'APPROVED'
+          ? 'They can order now, and have been emailed.'
+          : 'They’ve been told, with your reason.',
+        status === 'APPROVED' ? 'Approved' : 'Rejected',
+      );
+    } catch (err) {
+      toast.error((err as Error).message, 'Could not save the decision');
+    } finally {
+      setBusy(false);
+    }
+  }, [customer, busy, reason, invalidate]);
+
+  const setRep = useCallback(async (staffUserId: number | null) => {
+    if (!customer || busy) return;
+    setBusy(true);
+    try {
+      await assignStaff(customer.id, staffUserId);
+      await invalidate();
+      setAssignOpen(false);
+      toast.success(staffUserId ? 'Sales rep assigned.' : 'Sales rep removed.');
+    } catch (err) {
+      toast.error((err as Error).message, 'Could not assign');
+    } finally {
+      setBusy(false);
+    }
+  }, [customer, busy, invalidate]);
+
+  /**
+   * The certificate is a private upload, so the API mints a short-lived signed
+   * URL rather than exposing a permanent one. Fetch it on demand, then open it
+   * in a browser sheet — it may be a PDF, which no image viewer will render.
+   */
+  const openCertificate = useCallback(async () => {
+    if (!customer || busy) return;
+    setBusy(true);
+    try {
+      const { url } = await getPcnUrl(customer.id);
+      await WebBrowser.openBrowserAsync(url, {
+        presentationStyle: WebBrowser.WebBrowserPresentationStyle.PAGE_SHEET,
+      });
+    } catch (err) {
+      toast.error((err as Error).message, 'Could not open certificate');
+    } finally {
+      setBusy(false);
+    }
+  }, [customer, busy]);
+
+  /* ── Loading / error ── */
+  if (isLoading) {
+    return (
+      <View style={{ flex: 1, backgroundColor: color.bg }}>
+        <SafeAreaView style={{ flex: 1 }} edges={['top']}>
+          <ScreenHeader variant="compact" back title="Customer" />
+          <View style={{ padding: gutter, gap: space.base }}>
+            <Skeleton width="100%" height={120} radius="lg" />
+            <Skeleton width="100%" height={180} radius="lg" />
+          </View>
+        </SafeAreaView>
+      </View>
     );
   }
 
-  async function viewPcnCert() {
-    try {
-      const res = await api.get<{ signedUrl: string }>(`/api/customers/${id}/pcn-url`);
-      const url = (res as any).signedUrl ?? res;
-      if (typeof url === 'string') await Linking.openURL(url);
-    } catch {
-      toast.error('Could not load PCN certificate.');
-    }
+  if (isError || !customer) {
+    return (
+      <View style={{ flex: 1, backgroundColor: color.bg }}>
+        <SafeAreaView style={{ flex: 1 }} edges={['top']}>
+          <ScreenHeader variant="compact" back title="Customer" />
+          <View style={{ flex: 1, justifyContent: 'center' }}>
+            <EmptyState
+              iconName="alert"
+              tone="danger"
+              title="Couldn’t load this customer"
+              actionLabel="Try again"
+              onAction={() => void refetch()}
+              secondaryLabel="Back to customers"
+              onSecondary={() => router.replace('/(staff)/customers' as never)}
+            />
+          </View>
+        </SafeAreaView>
+      </View>
+    );
   }
 
-  const canApprove = customer?.status !== 'APPROVED';
-  const canReview  = ['PENDING_REVIEW', 'APPROVED', 'REJECTED'].includes(customer?.status ?? '');
+  const name = customer.company_name
+    ?? `${customer.user.first_name} ${customer.user.last_name}`.trim();
+  const contact = `${customer.user.first_name} ${customer.user.last_name}`.trim();
+  const initials = name.split(' ').filter(Boolean).slice(0, 2)
+    .map(p => p[0]?.toUpperCase()).join('') || '—';
+
+  const needsReview = REVIEWABLE.includes(customer.status);
 
   return (
-    <View style={[styles.root, { paddingBottom: insets.bottom }]}>
-      <ScreenHeader
-        title={customer ? `${customer.user.first_name} ${customer.user.last_name}` : 'Customer'}
-        back
-      />
+    <View style={{ flex: 1, backgroundColor: color.bg }}>
+      <SafeAreaView style={{ flex: 1 }} edges={['top']}>
+        <ScreenHeader variant="compact" back title={name} />
 
-      <ScrollView
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={styles.content}
-        refreshControl={<RefreshControl refreshing={isRefetching} onRefresh={refetch} tintColor={Colors.brand} />}
-      >
-        {isLoading ? (
-          <View style={{ gap: 16 }}>
-            <Skeleton height={200} radius={16} />
-            <Skeleton height={120} radius={16} />
-            <Skeleton height={80} radius={16} />
-          </View>
-        ) : customer ? (
-          <>
-            {customer.status === 'PENDING_REVIEW' && (
-              <View style={styles.pendingBanner}>
-                <Text style={{ fontSize: 20 }}>⏳</Text>
-                <Text style={styles.pendingText}>Awaiting review</Text>
-              </View>
-            )}
-
-            {/* Profile */}
-            <View style={styles.profileCard}>
-              <View style={styles.avatarCircle}>
-                <Text style={styles.avatarText}>
-                  {customer.user.first_name?.[0]?.toUpperCase()}{customer.user.last_name?.[0]?.toUpperCase()}
-                </Text>
-              </View>
-              <Text style={styles.fullName}>{customer.user.first_name} {customer.user.last_name}</Text>
-              <Text style={styles.emailTxt}>{customer.user.email}</Text>
-              {customer.user.phone && <Text style={styles.phoneTxt}>{customer.user.phone}</Text>}
-              <View style={styles.statusRow}>
-                <StatusBadge status={customer.status} type="order" />
-                {customer.pcn_verified && (
-                  <View style={styles.pcnPill}><Text style={styles.pcnText}>✓ PCN Verified</Text></View>
-                )}
-              </View>
-            </View>
-
-            {/* Business info */}
-            <View style={styles.card}>
-              <InfoRow label="Company"   value={customer.company_name ?? '—'} />
-              <InfoRow label="Address"   value={customer.address ?? '—'} />
-              <InfoRow label="City"      value={customer.city ?? '—'} />
-              <InfoRow label="State"     value={customer.state ?? '—'} />
-              <InfoRow label="Joined"    value={formatDate(customer.created_at)} />
-              <InfoRow label="Orders"    value={String(customer.order_count ?? 0)} last />
-            </View>
-
-            {/* PCN cert */}
-            {customer.pcn_certificate_url && (
-              <Pressable style={styles.pcnCard} onPress={viewPcnCert}>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.pcnCardTitle}>📄 PCN Certificate</Text>
-                  <Text style={styles.pcnCardSub}>Tap to view</Text>
+        <ScrollView
+          contentContainerStyle={{
+            padding: gutter,
+            gap: space.lg,
+            paddingBottom: layout.tabBarHeight + space['3xl'],
+          }}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+          refreshControl={
+            <RefreshControl refreshing={isRefetching} onRefresh={() => void refetch()} tintColor={color.brand} />
+          }
+        >
+          {/* ── Identity ── */}
+          <Animated.View entering={FadeInDown.duration(320)}>
+            <Surface level="sm" padded="base" rounded="xl">
+              <View style={{ gap: space.base }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.md }}>
+                  <View style={{
+                    width: 52, height: 52, borderRadius: radius.full,
+                    backgroundColor: color.surfaceDark,
+                    alignItems: 'center', justifyContent: 'center',
+                  }}>
+                    <Text variant="headline" style={{ color: '#fff' }}>{initials}</Text>
+                  </View>
+                  <View style={{ flex: 1, gap: 2 }}>
+                    <Text variant="title3" numberOfLines={2}>{name}</Text>
+                    <Text variant="caption" tone="tertiary" numberOfLines={1}>{contact}</Text>
+                  </View>
                 </View>
-                <Text style={{ fontSize: 18 }}>→</Text>
-              </Pressable>
-            )}
 
-            {/* Prior review */}
-            {(customer.reviewed_by || customer.review_note) && (
-              <View style={[styles.card, { padding: 14, gap: 6 }]}>
-                <Text style={styles.reviewLabel}>Previous Review</Text>
-                {customer.reviewed_by && <Text style={styles.reviewMeta}>By: {customer.reviewed_by.name}</Text>}
-                {customer.reviewed_at && <Text style={styles.reviewMeta}>On: {formatDate(customer.reviewed_at)}</Text>}
-                {customer.review_note && <Text style={styles.reviewNote}>{customer.review_note}</Text>}
-              </View>
-            )}
+                <View style={{ flexDirection: 'row', gap: space.sm, flexWrap: 'wrap' }}>
+                  <Badge tone={STATUS_TONE[customer.status]} size="sm" dot>
+                    {STATUS_LABEL[customer.status] ?? customer.status.toLowerCase()}
+                  </Badge>
+                  {customer.pcn_verified
+                    ? <Badge tone="brand" size="sm">PCN verified</Badge>
+                    : <Badge tone="neutral" size="sm">PCN unverified</Badge>}
+                  <Badge tone="neutral" size="sm">
+                    Joined {formatDate(customer.created_at)}
+                  </Badge>
+                </View>
 
-            {/* Review actions */}
-            {canReview && (
-              <>
-                <Text style={styles.sectionTitle}>Review Decision</Text>
-
-                {canApprove && (
-                  <Button variant="primary" size="lg" fullWidth
-                    loading={reviewMutation.isPending && !showRejectInput}
-                    onPress={handleApprove}
-                  >
-                    ✅ Approve Customer
-                  </Button>
-                )}
-
-                {!showRejectInput ? (
+                <View style={{ flexDirection: 'row', gap: space.sm }}>
                   <Button
-                    variant={customer.status === 'REJECTED' ? 'outline' : 'danger'}
-                    size="lg" fullWidth
-                    onPress={() => setShowRejectInput(true)}
+                    size="sm"
+                    variant="secondary"
+                    style={{ flex: 1 }}
+                    onPress={() => void Linking.openURL(`mailto:${customer.user.email}`)}
+                    icon={<Icon name="email" size={14} color={color.text} />}
                   >
-                    ❌ {customer.status === 'REJECTED' ? 'Update Rejection' : 'Reject Customer'}
+                    Email
                   </Button>
-                ) : (
-                  <View style={styles.rejectBox}>
-                    <Text style={styles.rejectLabel}>Reason for rejection *</Text>
-                    <TextInput
-                      style={styles.rejectInput}
-                      placeholder="e.g. PCN certificate is expired or invalid"
-                      placeholderTextColor={Colors.ink4}
-                      value={rejectNote}
-                      onChangeText={setRejectNote}
-                      multiline
-                      numberOfLines={4}
-                      textAlignVertical="top"
-                    />
-                    <View style={{ flexDirection: 'row', gap: 10 }}>
-                      <Pressable
-                        style={styles.cancelBtn}
-                        onPress={() => { setShowRejectInput(false); setRejectNote(''); }}
-                      >
-                        <Text style={styles.cancelBtnText}>Cancel</Text>
-                      </Pressable>
-                      <View style={{ flex: 1 }}>
-                        <Button variant="danger" size="md" fullWidth
-                          loading={reviewMutation.isPending}
-                          onPress={handleReject}
+                  {customer.user.phone ? (
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      style={{ flex: 1 }}
+                      onPress={() => void Linking.openURL(`tel:${customer.user.phone!.replace(/\s/g, '')}`)}
+                      icon={<Icon name="phone" size={14} color={color.text} />}
+                    >
+                      Call
+                    </Button>
+                  ) : null}
+                </View>
+              </View>
+            </Surface>
+          </Animated.View>
+
+          {/* ── Review ── */}
+          {needsReview ? (
+            <Animated.View entering={FadeInDown.delay(60).duration(320)} style={{ gap: space.sm }}>
+              <Text variant="overline" tone="tertiary">Review</Text>
+              <Surface tone="warning" level="none" padded="base" rounded="lg">
+                <View style={{ gap: space.base }}>
+                  <View style={{ flexDirection: 'row', gap: space.sm }}>
+                    <Icon name="clock" size={17} color={color.warning} filled />
+                    <Text variant="callout" style={{ flex: 1, color: '#92400e' }}>
+                      This pharmacy is waiting on you. Check their PCN certificate
+                      against the business name before approving.
+                    </Text>
+                  </View>
+
+                  {customer.pcn_certificate_url ? (
+                    <Button
+                      variant="secondary"
+                      fullWidth
+                      onPress={openCertificate}
+                      disabled={busy}
+                      icon={<Icon name="document" size={16} color={color.text} />}
+                    >
+                      View PCN certificate
+                    </Button>
+                  ) : (
+                    <Surface level="none" tone="danger" padded="md" rounded="md">
+                      <Text variant="caption" style={{ color: '#991b1b' }}>
+                        No certificate was uploaded. They can’t be approved until one is.
+                      </Text>
+                    </Surface>
+                  )}
+
+                  {rejecting ? (
+                    <Animated.View entering={FadeIn.duration(220)} style={{ gap: space.sm }}>
+                      <Input
+                        label="Why are you rejecting?"
+                        hint="Sent to the customer verbatim"
+                        placeholder="e.g. The certificate has expired"
+                        value={reason}
+                        onChangeText={setReason}
+                        editable={!busy}
+                        multiline
+                        required
+                      />
+                      <View style={{ flexDirection: 'row', gap: space.sm }}>
+                        <Button
+                          variant="secondary"
+                          style={{ flex: 1 }}
+                          onPress={() => { setRejecting(false); setReason(''); }}
+                          disabled={busy}
                         >
-                          Confirm Rejection
+                          Back
+                        </Button>
+                        <Button
+                          variant="danger"
+                          style={{ flex: 1 }}
+                          loading={busy}
+                          disabled={busy || reason.trim().length < 4}
+                          onPress={() => void decide('REJECTED')}
+                        >
+                          Reject
                         </Button>
                       </View>
+                    </Animated.View>
+                  ) : (
+                    <View style={{ flexDirection: 'row', gap: space.sm }}>
+                      <Button
+                        variant="secondary"
+                        style={{ flex: 1 }}
+                        onPress={() => setRejecting(true)}
+                        disabled={busy}
+                      >
+                        Reject
+                      </Button>
+                      <Button
+                        style={{ flex: 1.4 }}
+                        loading={busy}
+                        disabled={busy || !customer.pcn_certificate_url}
+                        onPress={() => void decide('APPROVED')}
+                        haptic="medium"
+                        icon={<Icon name="check" size={16} color="#fff" />}
+                      >
+                        Approve
+                      </Button>
                     </View>
+                  )}
+                </View>
+              </Surface>
+            </Animated.View>
+          ) : (
+            <Animated.View entering={FadeInDown.delay(60).duration(320)} style={{ gap: space.sm }}>
+              <Text variant="overline" tone="tertiary">Review</Text>
+              <Surface level="sm" padded="base" rounded="lg">
+                <View style={{ gap: space.md }}>
+                  <Row
+                    icon="shield"
+                    label="Decision"
+                    value={`${STATUS_LABEL[customer.status] ?? customer.status.toLowerCase()}${customer.reviewed_by ? ` by ${customer.reviewed_by}` : ''}`}
+                  />
+                  {customer.reviewed_at ? (
+                    <Row icon="calendar" label="Reviewed" value={formatDate(customer.reviewed_at)} />
+                  ) : null}
+                  {customer.review_note ? (
+                    <Row icon="document" label="Note" value={customer.review_note} />
+                  ) : null}
+                  {customer.pcn_certificate_url ? (
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onPress={openCertificate}
+                      disabled={busy}
+                      icon={<Icon name="document" size={14} color={color.text} />}
+                    >
+                      View PCN certificate
+                    </Button>
+                  ) : null}
+                </View>
+              </Surface>
+            </Animated.View>
+          )}
+
+          {/* ── Sales rep ── */}
+          <Animated.View entering={FadeInDown.delay(100).duration(320)} style={{ gap: space.sm }}>
+            <Text variant="overline" tone="tertiary">Sales rep</Text>
+            <Surface level="sm" padded="base" rounded="lg">
+              <View style={{ gap: space.md }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.md }}>
+                  <View style={{
+                    width: 34, height: 34, borderRadius: radius.full,
+                    backgroundColor: customer.assigned_staff ? color.accentSoft : color.surfaceMuted,
+                    alignItems: 'center', justifyContent: 'center',
+                  }}>
+                    <Icon
+                      name="team"
+                      size={15}
+                      color={customer.assigned_staff ? color.accent : color.textTertiary}
+                      filled={!!customer.assigned_staff}
+                    />
                   </View>
-                )}
-              </>
-            )}
+                  <View style={{ flex: 1 }}>
+                    {customer.assigned_staff ? (
+                      <>
+                        <Text variant="body">
+                          {customer.assigned_staff.first_name} {customer.assigned_staff.last_name}
+                        </Text>
+                        <Text variant="caption" tone="tertiary">{customer.assigned_staff.email}</Text>
+                      </>
+                    ) : (
+                      <>
+                        <Text variant="body" tone="tertiary">Nobody assigned</Text>
+                        <Text variant="caption" tone="disabled">
+                          Unassigned accounts don’t appear in any rep’s figures.
+                        </Text>
+                      </>
+                    )}
+                  </View>
+                  {isAdmin ? (
+                    <Pressable
+                      onPress={() => setAssignOpen(o => !o)}
+                      haptic="light"
+                      pressOpacity={0.6}
+                      hitSlop={8}
+                      disabled={busy}
+                    >
+                      <Text variant="label" tone="brand">
+                        {assignOpen ? 'Close' : customer.assigned_staff ? 'Change' : 'Assign'}
+                      </Text>
+                    </Pressable>
+                  ) : null}
+                </View>
 
-            <View style={{ height: 16 }} />
-          </>
-        ) : null}
-      </ScrollView>
+                {isAdmin && assignOpen ? (
+                  <Animated.View entering={FadeIn.duration(220)} style={{ gap: space.xs }}>
+                    <View style={{ height: layout.hairlineWidth, backgroundColor: color.borderSubtle }} />
+
+                    {repsQ.isLoading ? (
+                      <Skeleton width="100%" height={44} radius="md" />
+                    ) : (
+                      <>
+                        {(repsQ.data?.records ?? []).map(rep => {
+                          const active = customer.assigned_staff?.id === rep.id;
+                          return (
+                            <Pressable
+                              key={rep.id}
+                              onPress={() => void setRep(rep.id)}
+                              haptic="light"
+                              pressOpacity={0.6}
+                              disabled={busy}
+                              style={{
+                                flexDirection: 'row', alignItems: 'center', gap: space.md,
+                                paddingVertical: space.md, minHeight: layout.tapTarget,
+                              }}
+                            >
+                              <View style={{ flex: 1 }}>
+                                <Text variant="body">{rep.first_name} {rep.last_name}</Text>
+                                <Text variant="caption" tone="tertiary">
+                                  {rep.assigned_customers} {rep.assigned_customers === 1 ? 'account' : 'accounts'}
+                                </Text>
+                              </View>
+                              {active ? <Icon name="check" size={16} color={color.brand} /> : null}
+                            </Pressable>
+                          );
+                        })}
+
+                        {customer.assigned_staff ? (
+                          <Pressable
+                            onPress={() => void setRep(null)}
+                            haptic="light"
+                            pressOpacity={0.6}
+                            disabled={busy}
+                            style={{ paddingVertical: space.md }}
+                          >
+                            <Text variant="label" tone="danger">Remove assignment</Text>
+                          </Pressable>
+                        ) : null}
+                      </>
+                    )}
+                  </Animated.View>
+                ) : null}
+              </View>
+            </Surface>
+          </Animated.View>
+
+          {/* ── Business ── */}
+          <Animated.View entering={FadeInDown.delay(140).duration(320)} style={{ gap: space.sm }}>
+            <Text variant="overline" tone="tertiary">Business details</Text>
+            <Surface level="sm" padded="base" rounded="lg">
+              <View style={{ gap: space.md }}>
+                <Row icon="building" label="Business name" value={customer.company_name} />
+                <Row icon="email"    label="Email"         value={customer.user.email} />
+                <Row icon="phone"    label="Phone"         value={customer.user.phone} />
+                <Row
+                  icon="location"
+                  label="Address"
+                  value={[customer.address, customer.city, customer.state].filter(Boolean).join(', ') || null}
+                />
+                <Row icon="referrals" label="Referral code" value={customer.referral_code} />
+                {customer.referred_by ? (
+                  <Row icon="user-plus" label="Referred by" value={customer.referred_by} />
+                ) : null}
+              </View>
+            </Surface>
+          </Animated.View>
+
+          <Button
+            variant="secondary"
+            fullWidth
+            onPress={() => router.push(`/(staff)/orders?search=${encodeURIComponent(name)}` as never)}
+            icon={<Icon name="orders" size={16} color={color.text} />}
+          >
+            See their orders
+          </Button>
+        </ScrollView>
+      </SafeAreaView>
     </View>
   );
 }
 
-function InfoRow({ label, value, last }: { label: string; value: string; last?: boolean }) {
+function Row({ icon, label, value }: {
+  icon: IconName; label: string; value: string | null;
+}) {
   return (
-    <View style={[ir.wrap, !last && ir.border]}>
-      <Text style={ir.label}>{label}</Text>
-      <Text style={ir.value} numberOfLines={3}>{value}</Text>
+    <View style={{ flexDirection: 'row', gap: space.md }}>
+      <Icon name={icon} size={16} color={color.textTertiary} />
+      <View style={{ flex: 1 }}>
+        <Text variant="caption" tone="tertiary">{label}</Text>
+        <Text variant="callout" tone={value ? 'default' : 'disabled'}>
+          {value ?? 'Not provided'}
+        </Text>
+      </View>
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  root:    { flex: 1, backgroundColor: Colors.bg },
-  content: { padding: 16, gap: 12 },
-
-  pendingBanner: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: Colors.warning + '15', borderRadius: 12, padding: 14, borderLeftWidth: 4, borderLeftColor: Colors.warning },
-  pendingText:   { fontSize: 14, fontWeight: '700', color: Colors.warning },
-
-  profileCard: { backgroundColor: Colors.white, borderRadius: 16, padding: 20, alignItems: 'center', gap: 6, shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 8, elevation: 2 },
-  avatarCircle:{ width: 72, height: 72, borderRadius: 36, backgroundColor: Colors.brand + '20', alignItems: 'center', justifyContent: 'center', marginBottom: 4 },
-  avatarText:  { fontSize: 28, fontWeight: '800', color: Colors.brand },
-  fullName:    { fontSize: 20, fontWeight: '800', color: Colors.ink },
-  emailTxt:    { fontSize: 14, color: Colors.ink3 },
-  phoneTxt:    { fontSize: 13, color: Colors.ink4 },
-  statusRow:   { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 6 },
-  pcnPill:     { backgroundColor: Colors.success + '15', borderRadius: 20, paddingHorizontal: 10, paddingVertical: 4 },
-  pcnText:     { fontSize: 12, fontWeight: '700', color: Colors.success },
-
-  card: { backgroundColor: Colors.white, borderRadius: 16, overflow: 'hidden', shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 8, elevation: 2 },
-
-  pcnCard:      { flexDirection: 'row', alignItems: 'center', backgroundColor: Colors.brand + '08', borderRadius: 14, padding: 16, gap: 12, borderWidth: 1.5, borderColor: Colors.brand + '30' },
-  pcnCardTitle: { fontSize: 15, fontWeight: '700', color: Colors.brand },
-  pcnCardSub:   { fontSize: 12, color: Colors.ink3, marginTop: 2 },
-
-  reviewLabel: { fontSize: 12, fontWeight: '700', color: Colors.ink3, textTransform: 'uppercase', letterSpacing: 0.5 },
-  reviewMeta:  { fontSize: 13, color: Colors.ink3 },
-  reviewNote:  { fontSize: 14, color: Colors.ink2, fontStyle: 'italic', marginTop: 4, lineHeight: 20 },
-
-  sectionTitle: { fontSize: 16, fontWeight: '800', color: Colors.ink, marginTop: 4 },
-
-  rejectBox:    { backgroundColor: Colors.white, borderRadius: 14, padding: 16, gap: 12, shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 8, elevation: 2 },
-  rejectLabel:  { fontSize: 14, fontWeight: '600', color: Colors.ink },
-  rejectInput:  { borderWidth: 1.5, borderColor: Colors.danger + '60', borderRadius: 10, padding: 12, fontSize: 14, color: Colors.ink, minHeight: 100, backgroundColor: Colors.bg },
-  cancelBtn:    { paddingHorizontal: 16, paddingVertical: 13, borderRadius: 12, borderWidth: 1.5, borderColor: Colors.line, alignItems: 'center', justifyContent: 'center' },
-  cancelBtnText:{ fontSize: 14, fontWeight: '600', color: Colors.ink3 },
-});
-
-const ir = StyleSheet.create({
-  wrap:   { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 13 },
-  border: { borderBottomWidth: 1, borderBottomColor: Colors.line },
-  label:  { fontSize: 13, color: Colors.ink3, flex: 1 },
-  value:  { fontSize: 14, fontWeight: '600', color: Colors.ink, maxWidth: '55%', textAlign: 'right' },
-});

@@ -1,350 +1,373 @@
-import React, { useState } from 'react';
+/**
+ * Customers — console.
+ *
+ * The list defaults to showing everyone but leads with the pending queue,
+ * because reviewing a new pharmacy is the one genuinely time-sensitive task
+ * here — an unapproved account can browse but can't order, so every hour in
+ * the queue is an hour of lost trade.
+ *
+ * Admins get an extra filter: customers assigned to a particular rep. Staff
+ * don't, because the API already scopes their view.
+ */
+
+import React, { useCallback, useMemo, useState } from 'react';
+import { View, RefreshControl } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { useRouter, useLocalSearchParams } from 'expo-router';
+import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
+import Animated, {
+  FadeInDown, useSharedValue, useAnimatedScrollHandler,
+} from 'react-native-reanimated';
+
 import {
-  FlatList,
-  Modal,
-  Pressable,
-  RefreshControl,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from 'react-native';
-import { router } from 'expo-router';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useQuery } from '@tanstack/react-query';
-import { Colors } from '@/constants/colors';
-import { type } from '@/constants/typography';
-import { Icon } from '@/components/ui/Icon';
-import { RowSkeleton } from '@/components/ui/Skeleton';
-import { EmptyState } from '@/components/ui/EmptyState';
-import { StatusBadge } from '@/components/ui/Badge';
+  Text, Input, Pressable, Icon, Surface, Badge, EmptyState, RowSkeleton,
+} from '@/components/ui';
+import { ScreenHeader } from '@/components/shared/ScreenHeader';
+import { color, space, radius, gutter, layout } from '@/constants/theme';
 import { formatDate } from '@/lib/format';
-import { api } from '@/lib/api-client';
+import { useAuth } from '@/contexts/AuthContext';
+import { useDebounced } from '@/hooks/use-debounced';
+import {
+  listCustomers, listStaff,
+  type AdminCustomer, type CustomerStatus,
+} from '@/lib/services/admin.service';
 
-interface Customer {
-  id:           number;
-  status:       string;
-  company_name: string | null;
-  city:         string | null;
-  state:        string | null;
-  created_at:   string;
-  pcn_verified: boolean;
-  user: {
-    first_name: string;
-    last_name:  string;
-    email:      string;
-    phone:      string | null;
-  };
-}
-
-interface CustomersResponse {
-  records:    Customer[];
-  pagination: { total: number };
-}
-
-const STATUS_FILTERS = [
-  { value: 'all',              label: 'All' },
-  { value: 'PENDING_REVIEW',   label: 'Pending Review' },
-  { value: 'APPROVED',         label: 'Approved' },
-  { value: 'REJECTED',         label: 'Rejected' },
-  { value: 'OTP_CONFIRMED',    label: 'OTP Confirmed' },
-  { value: 'REGISTERED',       label: 'Registered' },
+/**
+ * Ordered by where an account sits in onboarding, not alphabetically — the list
+ * doubles as a funnel. `PENDING_REVIEW` leads because it's the only one that
+ * needs a human.
+ */
+const STATUSES: { value: CustomerStatus | null; label: string }[] = [
+  { value: null,                label: 'All' },
+  { value: 'PENDING_REVIEW',    label: 'Awaiting review' },
+  { value: 'APPROVED',          label: 'Approved' },
+  { value: 'PCN_CERT_UPLOADED', label: 'Cert uploaded' },
+  { value: 'OTP_CONFIRMED',     label: 'Email confirmed' },
+  { value: 'REGISTERED',        label: 'Registered' },
+  { value: 'REJECTED',          label: 'Rejected' },
 ];
 
-export default function Customers() {
-  const insets = useSafeAreaInsets();
-  const [search, setSearch]       = useState('');
-  const [debSearch, setDebSearch] = useState('');
-  const [filter, setFilter]       = useState('all');
-  const [showFilter, setShowFilter] = useState(false);
+const STATUS_TONE: Record<CustomerStatus, 'success' | 'warning' | 'danger' | 'neutral'> = {
+  APPROVED:          'success',
+  PENDING_REVIEW:    'warning',
+  PCN_CERT_UPLOADED: 'neutral',
+  OTP_CONFIRMED:     'neutral',
+  REGISTERED:        'neutral',
+  REJECTED:          'danger',
+};
 
-  const timer = React.useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  function handleSearch(t: string) {
-    setSearch(t);
-    clearTimeout(timer.current);
-    timer.current = setTimeout(() => setDebSearch(t), 400);
-  }
+/** Long enum values need shortening to fit a badge. */
+const STATUS_LABEL: Record<CustomerStatus, string> = {
+  APPROVED:          'approved',
+  PENDING_REVIEW:    'awaiting review',
+  PCN_CERT_UPLOADED: 'cert uploaded',
+  OTP_CONFIRMED:     'email confirmed',
+  REGISTERED:        'registered',
+  REJECTED:          'rejected',
+};
 
-  const { data, isLoading, isError, refetch, isRefetching } = useQuery({
-    queryKey: ['staff-customers', debSearch, filter],
-    queryFn: () => {
-      const params = new URLSearchParams();
-      if (debSearch)        params.set('search', debSearch);
-      if (filter !== 'all') params.set('status', filter);
-      const qs = params.toString();
-      return api.get<CustomersResponse>(`/api/customers${qs ? `?${qs}` : ''}`);
-    },
+export default function ConsoleCustomersScreen() {
+  const router = useRouter();
+  const { user } = useAuth();
+  const params = useLocalSearchParams<{ status?: string }>();
+
+  const isAdmin = user?.role === 'ADMIN';
+
+  // Deep-linked from the overview's "awaiting review" action.
+  const initialStatus = STATUSES.some(s => s.value === params.status)
+    ? (params.status as CustomerStatus)
+    : null;
+
+  const [rawSearch, setRawSearch] = useState('');
+  const [status,    setStatus]    = useState<CustomerStatus | null>(initialStatus);
+  const [repId,     setRepId]     = useState<number | null>(null);
+
+  const search = useDebounced(rawSearch, 350);
+
+  const scrollY = useSharedValue(0);
+  const onScroll = useAnimatedScrollHandler({
+    onScroll: e => { scrollY.value = e.contentOffset.y; },
   });
 
-  const customers  = data?.records ?? [];
-  const activeFilter = STATUS_FILTERS.find(f => f.value === filter);
+  // Reps for the assignment filter. Admin only — staff can't reassign or
+  // filter by someone else's book.
+  const repsQ = useQuery({
+    queryKey: ['staff', 'reps'],
+    queryFn:  () => listStaff({ role: 'STAFF', limit: 100 }),
+    enabled:  isAdmin,
+    staleTime: 5 * 60_000,
+  });
+
+  const customersQ = useInfiniteQuery({
+    queryKey: ['customers', 'console', search, status, repId],
+    queryFn:  ({ pageParam = 1 }) => listCustomers({
+      page: pageParam as number, limit: 20,
+      search, status, assigned_staff_id: repId,
+    }),
+    initialPageParam: 1,
+    getNextPageParam: last => {
+      const { current_page, total_pages } = last.pagination;
+      return current_page < total_pages ? current_page + 1 : undefined;
+    },
+    staleTime: 20_000,
+  });
+
+  const customers = useMemo(
+    () => customersQ.data?.pages.flatMap(p => p.records) ?? [],
+    [customersQ.data],
+  );
+
+  const total    = customersQ.data?.pages[0]?.pagination.total ?? 0;
+  const filtered = !!search || !!status || !!repId;
+
+  const open = useCallback((id: number) => {
+    router.push(`/(staff)/customers/${id}` as never);
+  }, [router]);
 
   return (
-    <View style={[styles.root, { paddingTop: insets.top }]}>
-      {/* Header */}
-      <View style={styles.header}>
-        <View>
-          <Text style={styles.heading}>Customers</Text>
-          {!isLoading && (
-            <Text style={styles.count}>{data?.pagination?.total ?? 0} total</Text>
-          )}
-        </View>
-        <Pressable
-          style={styles.addBtn}
-          onPress={() => router.push('/(staff)/customers/new')}
-        >
-          <Icon name="plus" size={18} color={Colors.white} />
-        </Pressable>
-      </View>
-
-      {/* Search + filter */}
-      <View style={styles.toolbar}>
-        <View style={styles.searchBox}>
-          <Icon name="search" size={16} color={Colors.ink4} />
-          <TextInput
-            style={styles.searchInput}
-            placeholder="Search by name or email"
-            placeholderTextColor={Colors.ink4}
-            value={search}
-            onChangeText={handleSearch}
-            autoCapitalize="none"
-          />
-          {search.length > 0 && (
-            <Pressable onPress={() => { setSearch(''); setDebSearch(''); }} hitSlop={8}>
-              <Icon name="close" size={14} color={Colors.ink4} />
-            </Pressable>
-          )}
-        </View>
-
-        <Pressable
-          style={[styles.filterBtn, filter !== 'all' && styles.filterBtnActive]}
-          onPress={() => setShowFilter(true)}
-        >
-          <Icon name="filter" size={16} color={filter !== 'all' ? Colors.brand : Colors.ink3} />
-          {filter !== 'all' && (
-            <Text style={styles.filterBtnLabel}>{activeFilter?.label}</Text>
-          )}
-        </Pressable>
-      </View>
-
-      {/* List */}
-      {isLoading ? (
-        <View style={styles.skeletons}>
-          {Array.from({ length: 8 }).map((_, i) => <RowSkeleton key={i} />)}
-        </View>
-      ) : isError ? (
-        <EmptyState
-          iconName="alert"
-          title="Couldn't load customers"
-          actionLabel="Retry"
-          onAction={() => refetch()}
-        />
-      ) : customers.length === 0 ? (
-        <EmptyState
-          iconName="customers"
-          title="No customers found"
-          subtitle={debSearch ? 'Try a different search.' : 'Customers will appear here once they sign up.'}
-        />
-      ) : (
-        <FlatList
-          data={customers}
-          keyExtractor={c => String(c.id)}
-          contentContainerStyle={styles.list}
-          refreshControl={
-            <RefreshControl refreshing={isRefetching} onRefresh={refetch} tintColor={Colors.brand} />
-          }
-          renderItem={({ item }) => (
+    <View style={{ flex: 1, backgroundColor: color.bg }}>
+      <SafeAreaView style={{ flex: 1 }} edges={['top']}>
+        <ScreenHeader
+          title="Customers"
+          subtitle={total > 0 ? `${total.toLocaleString()} matching` : undefined}
+          scrollY={scrollY}
+          right={
             <Pressable
-              style={({ pressed }) => [styles.card, pressed && { opacity: 0.85 }]}
-              onPress={() => router.push(`/(staff)/customers/${item.id}`)}
+              onPress={() => router.push('/(staff)/customers/new' as never)}
+              haptic="medium"
+              pressScale={0.92}
+              accessibilityRole="button"
+              accessibilityLabel="Add a customer"
+              style={{
+                width: 40, height: 40, borderRadius: radius.full,
+                backgroundColor: color.text,
+                alignItems: 'center', justifyContent: 'center',
+              }}
             >
-              <View style={styles.cardTop}>
-                <View style={styles.avatarWrap}>
-                  <Text style={styles.avatarText}>
-                    {item.user.first_name?.[0]?.toUpperCase()}{item.user.last_name?.[0]?.toUpperCase()}
-                  </Text>
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.name}>{item.user.first_name} {item.user.last_name}</Text>
-                  <Text style={styles.email} numberOfLines={1}>{item.user.email}</Text>
-                  {item.company_name && (
-                    <Text style={styles.company} numberOfLines={1}>{item.company_name}</Text>
-                  )}
-                </View>
-                <View style={styles.badges}>
-                  <StatusBadge status={item.status} type="order" />
-                  {item.pcn_verified && (
-                    <View style={styles.pcnBadge}>
-                      <Icon name="check" size={9} color={Colors.success} />
-                      <Text style={styles.pcnText}>PCN</Text>
-                    </View>
-                  )}
-                </View>
-              </View>
-              <View style={styles.divider} />
-              <View style={styles.cardBottom}>
-                <View style={styles.locationRow}>
-                  {(item.city || item.state) && (
-                    <Icon name="location" size={12} color={Colors.ink4} />
-                  )}
-                  <Text style={styles.locationText}>
-                    {[item.city, item.state].filter(Boolean).join(', ') || '—'}
-                  </Text>
-                </View>
-                <View style={styles.dateRow}>
-                  <Icon name="calendar" size={12} color={Colors.ink4} />
-                  <Text style={styles.dateText}>Joined {formatDate(item.created_at)}</Text>
-                </View>
-              </View>
+              <Icon name="user-plus" size={17} color="#fff" />
             </Pressable>
-          )}
+          }
         />
-      )}
 
-      {/* Filter modal */}
-      <Modal visible={showFilter} transparent animationType="slide" onRequestClose={() => setShowFilter(false)}>
-        <Pressable style={styles.modalOverlay} onPress={() => setShowFilter(false)} />
-        <View style={[styles.modalSheet, { paddingBottom: insets.bottom + 16 }]}>
-          <View style={styles.modalHandle} />
-          <Text style={styles.modalTitle}>Filter by status</Text>
-          <ScrollView showsVerticalScrollIndicator={false}>
-            {STATUS_FILTERS.map(f => (
+        <View style={{ paddingHorizontal: gutter, gap: space.md, paddingBottom: space.md }}>
+          <Input
+            placeholder="Pharmacy, contact name or email"
+            value={rawSearch}
+            onChangeText={setRawSearch}
+            autoCapitalize="none"
+            autoCorrect={false}
+            returnKeyType="search"
+            leading={<Icon name="search" size={17} color={color.textTertiary} />}
+            trailing={rawSearch ? <Icon name="close" size={16} color={color.textTertiary} /> : undefined}
+            onTrailingPress={rawSearch ? () => setRawSearch('') : undefined}
+          />
+
+          <Animated.ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={{ gap: space.sm }}
+          >
+            {STATUSES.map(s => (
               <Pressable
-                key={f.value}
-                style={styles.modalOption}
-                onPress={() => { setFilter(f.value); setShowFilter(false); }}
+                key={s.label}
+                onPress={() => setStatus(s.value)}
+                haptic="light"
+                pressScale={0.95}
+                accessibilityRole="button"
+                accessibilityState={{ selected: status === s.value }}
+                style={{
+                  paddingHorizontal: space.md, height: 32,
+                  justifyContent: 'center', borderRadius: radius.full,
+                  backgroundColor: status === s.value ? color.text : color.surface,
+                  borderWidth: layout.hairlineWidth,
+                  borderColor: status === s.value ? color.text : color.border,
+                }}
               >
-                <Text style={[styles.modalOptionText, filter === f.value && styles.modalOptionActive]}>
-                  {f.label}
+                <Text variant="caption" style={{
+                  color: status === s.value ? '#fff' : color.textSecondary,
+                  fontWeight: status === s.value ? '700' : '500',
+                }}>
+                  {s.label}
                 </Text>
-                {filter === f.value && <Icon name="check" size={16} color={Colors.brand} />}
               </Pressable>
             ))}
-          </ScrollView>
+          </Animated.ScrollView>
+
+          {isAdmin && (repsQ.data?.records.length ?? 0) > 0 ? (
+            <Animated.ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={{ gap: space.sm }}
+            >
+              <Pressable
+                onPress={() => setRepId(null)}
+                haptic="light"
+                pressScale={0.95}
+                style={chipStyle(repId === null)}
+              >
+                <Text variant="caption" style={chipText(repId === null)}>Any rep</Text>
+              </Pressable>
+
+              {(repsQ.data?.records ?? []).map(rep => (
+                <Pressable
+                  key={rep.id}
+                  onPress={() => setRepId(rep.id)}
+                  haptic="light"
+                  pressScale={0.95}
+                  style={chipStyle(repId === rep.id)}
+                >
+                  <Text variant="caption" style={chipText(repId === rep.id)}>
+                    {rep.first_name} {rep.last_name[0]}.
+                  </Text>
+                </Pressable>
+              ))}
+            </Animated.ScrollView>
+          ) : null}
         </View>
-      </Modal>
+
+        <Animated.FlatList
+          data={customers}
+          keyExtractor={c => String(c.id)}
+          onScroll={onScroll}
+          scrollEventThrottle={16}
+          contentContainerStyle={{
+            paddingHorizontal: gutter,
+            paddingBottom: layout.tabBarHeight + space.xl,
+            gap: space.md,
+          }}
+          showsVerticalScrollIndicator={false}
+          onEndReached={() => {
+            if (customersQ.hasNextPage && !customersQ.isFetchingNextPage) {
+              void customersQ.fetchNextPage();
+            }
+          }}
+          onEndReachedThreshold={0.5}
+          refreshControl={
+            <RefreshControl
+              refreshing={customersQ.isRefetching && !customersQ.isFetchingNextPage}
+              onRefresh={() => void customersQ.refetch()}
+              tintColor={color.brand}
+            />
+          }
+          renderItem={({ item, index }) => (
+            <CustomerRow customer={item} index={index} onPress={() => open(item.id)} />
+          )}
+          ListEmptyComponent={
+            customersQ.isLoading ? (
+              <View style={{ gap: space.md }}>
+                {Array.from({ length: 5 }).map((_, i) => <RowSkeleton key={i} />)}
+              </View>
+            ) : customersQ.isError ? (
+              <EmptyState
+                iconName="alert"
+                tone="danger"
+                title="Couldn’t load customers"
+                actionLabel="Retry"
+                onAction={() => void customersQ.refetch()}
+              />
+            ) : filtered ? (
+              <EmptyState
+                iconName="filter"
+                compact
+                title="No customers match"
+                actionLabel="Clear filters"
+                onAction={() => { setRawSearch(''); setStatus(null); setRepId(null); }}
+              />
+            ) : (
+              <EmptyState
+                iconName="customers"
+                tone="brand"
+                title="No customers yet"
+                subtitle="Pharmacies that register — or that your team adds — appear here."
+                actionLabel="Add a customer"
+                onAction={() => router.push('/(staff)/customers/new' as never)}
+              />
+            )
+          }
+          ListFooterComponent={customersQ.isFetchingNextPage ? <RowSkeleton /> : null}
+        />
+      </SafeAreaView>
     </View>
   );
 }
 
-const styles = StyleSheet.create({
-  root:    { flex: 1, backgroundColor: Colors.bg },
-  header:  {
-    flexDirection:     'row',
-    alignItems:        'center',
-    justifyContent:    'space-between',
-    paddingHorizontal: 20,
-    paddingVertical:   14,
-    backgroundColor:   Colors.white,
-    borderBottomWidth: 0.5,
-    borderBottomColor: Colors.line,
-  },
-  heading: { ...type.h2, color: Colors.ink },
-  count:   { ...type.caption, color: Colors.ink4, marginTop: 2 },
-  addBtn:  {
-    width:           40,
-    height:          40,
-    borderRadius:    12,
-    backgroundColor: Colors.brand,
-    alignItems:      'center',
-    justifyContent:  'center',
-  },
+/* ── Bits ───────────────────────────────────────────────────────────────── */
 
-  toolbar: {
-    flexDirection:     'row',
-    alignItems:        'center',
-    gap:               10,
-    paddingHorizontal: 16,
-    paddingVertical:   10,
-    backgroundColor:   Colors.white,
-    borderBottomWidth: 0.5,
-    borderBottomColor: Colors.line,
-  },
-  searchBox: {
-    flex:              1,
-    flexDirection:     'row',
-    alignItems:        'center',
-    backgroundColor:   Colors.bg,
-    borderRadius:      12,
-    paddingHorizontal: 12,
-    height:            42,
-    gap:               8,
-    borderWidth:       1,
-    borderColor:       Colors.line,
-  },
-  searchInput:   { flex: 1, ...type.body, color: Colors.ink },
-  filterBtn: {
-    flexDirection:     'row',
-    alignItems:        'center',
-    gap:               6,
-    paddingHorizontal: 14,
-    height:            42,
-    borderRadius:      12,
-    backgroundColor:   Colors.bg,
-    borderWidth:       1,
-    borderColor:       Colors.line,
-  },
-  filterBtnActive: { backgroundColor: Colors.brandLight, borderColor: Colors.brand },
-  filterBtnLabel:  { ...type.btnSm, color: Colors.brand },
+function chipStyle(active: boolean) {
+  return {
+    paddingHorizontal: space.md,
+    height: 30,
+    justifyContent: 'center' as const,
+    borderRadius: radius.full,
+    backgroundColor: active ? color.brandSoft : color.surface,
+    borderWidth: layout.hairlineWidth,
+    borderColor: active ? color.brand : color.border,
+  };
+}
 
-  skeletons: { padding: 16, gap: 8 },
-  list:      { padding: 16, gap: 10, paddingBottom: 32 },
+function chipText(active: boolean) {
+  return {
+    color: active ? color.brand : color.textSecondary,
+    fontWeight: (active ? '700' : '500') as '700' | '500',
+  };
+}
 
-  card: {
-    backgroundColor: Colors.white,
-    borderRadius:    16,
-    padding:         16,
-    shadowColor:     '#000',
-    shadowOpacity:   0.04,
-    shadowRadius:    8,
-    shadowOffset:    { width: 0, height: 2 },
-    elevation:       1,
-  },
-  cardTop:    { flexDirection: 'row', alignItems: 'flex-start', gap: 12 },
-  avatarWrap: {
-    width:           44,
-    height:          44,
-    borderRadius:    14,
-    backgroundColor: Colors.brandLight,
-    alignItems:      'center',
-    justifyContent:  'center',
-    flexShrink:      0,
-  },
-  avatarText: { ...type.h4, color: Colors.brand },
-  name:       { ...type.h4, color: Colors.ink },
-  email:      { ...type.caption, color: Colors.ink3, marginTop: 2 },
-  company:    { ...type.caption, color: Colors.ink4, marginTop: 1, fontStyle: 'italic' },
-  badges:     { alignItems: 'flex-end', gap: 5 },
-  pcnBadge:   {
-    flexDirection:   'row',
-    alignItems:      'center',
-    gap:             3,
-    backgroundColor: Colors.successLight,
-    paddingHorizontal: 7,
-    paddingVertical: 3,
-    borderRadius:    8,
-  },
-  pcnText:  { ...type.overline, fontSize: 9, color: Colors.success },
-  divider:  { height: 0.5, backgroundColor: Colors.line, marginVertical: 10 },
-  cardBottom:   { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  locationRow:  { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  locationText: { ...type.caption, color: Colors.ink4 },
-  dateRow:      { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  dateText:     { ...type.caption, color: Colors.ink4 },
+function CustomerRow({ customer, index, onPress }: {
+  customer: AdminCustomer; index: number; onPress: () => void;
+}) {
+  const name = customer.company_name
+    ?? `${customer.user.first_name} ${customer.user.last_name}`.trim();
 
-  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.35)' },
-  modalSheet: {
-    backgroundColor:      Colors.white,
-    borderTopLeftRadius:  24,
-    borderTopRightRadius: 24,
-    paddingHorizontal:    24,
-    paddingTop:           16,
-    maxHeight:            '60%',
-  },
-  modalHandle:          { width: 36, height: 4, borderRadius: 2, backgroundColor: Colors.line, alignSelf: 'center', marginBottom: 16 },
-  modalTitle:           { ...type.h3, color: Colors.ink, marginBottom: 12 },
-  modalOption:          { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 14, borderBottomWidth: 0.5, borderBottomColor: Colors.line },
-  modalOptionText:      { ...type.bodyMed, color: Colors.ink2 },
-  modalOptionActive:    { color: Colors.brand },
-});
+  const initials = name.split(' ').filter(Boolean).slice(0, 2)
+    .map(p => p[0]?.toUpperCase()).join('') || '—';
+
+  const location = [customer.city, customer.state].filter(Boolean).join(', ');
+
+  return (
+    <Animated.View entering={FadeInDown.delay(Math.min(index, 8) * 40).duration(320)}>
+      <Pressable onPress={onPress} haptic="light" pressScale={0.985}>
+        <Surface level="sm" padded="base" rounded="lg">
+          <View style={{ flexDirection: 'row', gap: space.md }}>
+            <View style={{
+              width: 42, height: 42, borderRadius: radius.full,
+              backgroundColor: color.surfaceMuted,
+              alignItems: 'center', justifyContent: 'center',
+            }}>
+              <Text variant="label" tone="secondary">{initials}</Text>
+            </View>
+
+            <View style={{ flex: 1, gap: space.xs }}>
+              <Text variant="bodyMedium" numberOfLines={1}>{name}</Text>
+              <Text variant="caption" tone="tertiary" numberOfLines={1}>
+                {location || customer.user.email}
+              </Text>
+
+              <View style={{ flexDirection: 'row', gap: space.sm, flexWrap: 'wrap', marginTop: 2 }}>
+                <Badge tone={STATUS_TONE[customer.status]} size="sm" dot>
+                  {STATUS_LABEL[customer.status] ?? customer.status.toLowerCase()}
+                </Badge>
+                {customer.pcn_verified ? (
+                  <Badge tone="brand" size="sm">PCN verified</Badge>
+                ) : null}
+                {customer.assigned_staff ? (
+                  <Badge tone="neutral" size="sm">
+                    {customer.assigned_staff.first_name} {customer.assigned_staff.last_name[0]}.
+                  </Badge>
+                ) : (
+                  <Badge tone="warning" size="sm">Unassigned</Badge>
+                )}
+              </View>
+            </View>
+
+            <View style={{ alignItems: 'flex-end', justifyContent: 'space-between' }}>
+              <Icon name="chevron-right" size={16} color={color.textDisabled} />
+              <Text variant="caption" tone="disabled">
+                {formatDate(customer.created_at)}
+              </Text>
+            </View>
+          </View>
+        </Surface>
+      </Pressable>
+    </Animated.View>
+  );
+}

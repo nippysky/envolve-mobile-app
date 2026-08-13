@@ -44,3 +44,29 @@ export const TokenStorage = {
     ]);
   },
 };
+
+
+/**
+ * Non-sensitive preferences.
+ *
+ * Kept separate from TokenStorage on purpose — the keychain is for secrets,
+ * and writing flags there is both slower and semantically wrong. SecureStore
+ * is still used as the backing store so there is one dependency rather than
+ * pulling in AsyncStorage for a single boolean.
+ */
+export const Storage = {
+  async get(key: string): Promise<string | null> {
+    try { return await SecureStore.getItemAsync(`pref_${key}`); }
+    catch { return null; }
+  },
+
+  async set(key: string, value: string): Promise<void> {
+    try { await SecureStore.setItemAsync(`pref_${key}`, value); }
+    catch { /* a failed preference write must never block navigation */ }
+  },
+
+  async remove(key: string): Promise<void> {
+    try { await SecureStore.deleteItemAsync(`pref_${key}`); }
+    catch { /* noop */ }
+  },
+};

@@ -35,6 +35,12 @@ interface AuthContextValue {
   user:      AppUser | null;
   isLoading: boolean;
   login:     (user: AppUser, access: string, refresh: string) => Promise<void>;
+  /**
+   * Preferred entry point — takes the `{ access_token, refresh_token }` pair
+   * exactly as the API returns it, so call sites don't have to destructure.
+   * Routing to the correct role stack is handled here, not by the screen.
+   */
+  signIn:    (user: AppUser, tokens: { access_token: string; refresh_token: string }) => Promise<void>;
   logout:    () => Promise<void>;
 }
 
@@ -94,6 +100,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     router.replace(home[appUser.role] as any);
   }, []);
 
+  const signIn = useCallback(
+    (appUser: AppUser, tokens: { access_token: string; refresh_token: string }) =>
+      login(appUser, tokens.access_token, tokens.refresh_token),
+    [login],
+  );
+
   // ── Logout ───────────────────────────────────────────────────────────────
   const logout = useCallback(async () => {
     try {
@@ -117,7 +129,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   return (
-    <AuthContext.Provider value={{ user, isLoading, login, logout }}>
+    <AuthContext.Provider value={{ user, isLoading, login, signIn, logout }}>
       {children}
     </AuthContext.Provider>
   );

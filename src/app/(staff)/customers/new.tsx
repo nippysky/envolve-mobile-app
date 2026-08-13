@@ -1,212 +1,349 @@
 /**
- * Add Customer (Staff/Admin only)
- * POST /api/customers — fields match customerOnboardSchema exactly.
- * The backend sends an invitation email with OTP to the new customer.
+ * Add a customer.
+ *
+ * For accounts the team onboards directly — a pharmacy that phoned in rather
+ * than signing up. The API creates the user and emails them an invitation with
+ * an OTP; they set their own password and upload their PCN certificate.
+ *
+ * So this form deliberately has no password field and no certificate upload.
+ * Staff creating a password for someone else would put a credential in a
+ * channel it shouldn't be in, and the certificate has to come from the
+ * pharmacy anyway.
+ *
+ * Validation mirrors `customerOnboardSchema` on the server, including the
+ * letters-only name rule, so failures surface inline rather than as a 422 with
+ * a field map the user has to decode.
  */
 
-import React, { useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
+import { View, ScrollView, KeyboardAvoidingView, Platform } from 'react-native';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useRouter } from 'expo-router';
+import { useQueryClient } from '@tanstack/react-query';
+import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';
+
 import {
-  KeyboardAvoidingView,
-  Platform,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native';
-import { router } from 'expo-router';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { Colors } from '@/constants/colors';
-import { type } from '@/constants/typography';
+  Text, Button, Input, Pressable, Icon, Surface,
+} from '@/components/ui';
 import { ScreenHeader } from '@/components/shared/ScreenHeader';
-import { Button } from '@/components/ui/Button';
-import { Input } from '@/components/ui/Input';
-import { api, ApiError } from '@/lib/api-client';
+import { color, space, radius, gutter, layout } from '@/constants/theme';
+import { apiFetch, ApiError } from '@/lib/api-client';
+import { NIGERIAN_STATES } from '@/constants/states';
 import { toast } from '@/lib/toast';
 
-const NIGERIAN_STATES = [
-  'Abia','Adamawa','Akwa Ibom','Anambra','Bauchi','Bayelsa','Benue','Borno',
-  'Cross River','Delta','Ebonyi','Edo','Ekiti','Enugu','Gombe','Imo','Jigawa',
-  'Kaduna','Kano','Katsina','Kebbi','Kogi','Kwara','Lagos','Nasarawa','Niger',
-  'Ogun','Ondo','Osun','Oyo','Plateau','Rivers','Sokoto','Taraba','Yobe','Zamfara',
-  'FCT',
-];
+/** Mirrors the server's `nameField` rule — letters, spaces, apostrophes, hyphens. */
+const NAME_RE = /^[a-zA-ZÀ-ÿ\s'-]+$/;
 
-export default function AddCustomer() {
+export default function AddCustomerScreen() {
+  const router = useRouter();
   const insets = useSafeAreaInsets();
-  const qc     = useQueryClient();
+  const queryClient = useQueryClient();
 
-  const [firstName,   setFirstName]   = useState('');
-  const [middleName,  setMiddleName]  = useState('');
-  const [lastName,    setLastName]    = useState('');
-  const [companyName, setCompanyName] = useState('');
-  const [email,       setEmail]       = useState('');
-  const [phone,       setPhone]       = useState('');
-  const [address,     setAddress]     = useState('');
-  const [city,        setCity]        = useState('');
-  const [state,       setState]       = useState('');
-  const [errors,      setErrors]      = useState<Record<string, string>>({});
+  const [first,   setFirst]   = useState('');
+  const [middle,  setMiddle]  = useState('');
+  const [last,    setLast]    = useState('');
+  const [company, setCompany] = useState('');
+  const [email,   setEmail]   = useState('');
+  const [phone,   setPhone]   = useState('');
+  const [address, setAddress] = useState('');
+  const [city,    setCity]    = useState('');
+  const [state,   setState]   = useState('');
 
-  const createCustomer = useMutation({
-    mutationFn: () =>
-      api.post('/api/customers', {
-        first_name:   firstName.trim(),
-        middle_name:  middleName.trim() || undefined,
-        last_name:    lastName.trim(),
-        company_name: companyName.trim(),
-        email:        email.trim().toLowerCase(),
-        phone:        phone.trim(),
-        address:      address.trim(),
-        city:         city.trim(),
-        state:        state.trim(),
-      }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['staff-customers'] });
-      toast.success('Customer added. An invitation email has been sent.', '✅ Customer Created');
+  const [statePicker, setStatePicker] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [errs, setErrs] = useState<Record<string, string>>({});
+
+  const clear = (k: string) => setErrs(p => ({ ...p, [k]: '' }));
+
+  const validate = useCallback(() => {
+    const e: Record<string, string> = {};
+
+    if (first.trim().length < 2)          e.first = 'First name is required.';
+    else if (!NAME_RE.test(first.trim())) e.first = 'Letters only — no numbers or symbols.';
+
+    if (last.trim().length < 2)           e.last = 'Last name is required.';
+    else if (!NAME_RE.test(last.trim()))  e.last = 'Letters only — no numbers or symbols.';
+
+    if (middle.trim() && !NAME_RE.test(middle.trim())) {
+      e.middle = 'Letters only — no numbers or symbols.';
+    }
+
+    if (company.trim().length < 2)  e.company = 'Pharmacy or company name is required.';
+    if (!email.includes('@'))       e.email   = 'Enter a valid email address.';
+    if (phone.trim().length < 8)    e.phone   = 'Enter a valid phone number.';
+    if (address.trim().length < 5)  e.address = 'Enter the full street address.';
+    if (city.trim().length < 2)     e.city    = 'City is required.';
+    if (state.trim().length < 2)    e.state   = 'Select a state.';
+
+    setErrs(e);
+    return Object.keys(e).length === 0;
+  }, [first, middle, last, company, email, phone, address, city, state]);
+
+  const submit = useCallback(async () => {
+    if (busy || !validate()) return;
+
+    setBusy(true);
+    try {
+      await apiFetch('/api/customers', {
+        method: 'POST',
+        body: JSON.stringify({
+          first_name:   first.trim(),
+          middle_name:  middle.trim() || undefined,
+          last_name:    last.trim(),
+          company_name: company.trim(),
+          email:        email.trim().toLowerCase(),
+          phone:        phone.trim(),
+          address:      address.trim(),
+          city:         city.trim(),
+          state:        state.trim(),
+        }),
+      });
+
+      await queryClient.invalidateQueries({ queryKey: ['customers'] });
+      toast.success(`An invitation has been emailed to ${email.trim()}.`, 'Customer added');
       router.back();
-    },
-    onError: (e) => {
-      if (e instanceof ApiError && e.errors) {
-        const fe: Record<string, string> = {};
-        for (const [k, msgs] of Object.entries(e.errors)) {
-          fe[k] = Array.isArray(msgs) ? msgs[0] : String(msgs);
-        }
-        setErrors(fe);
+    } catch (err) {
+      const e = err as ApiError;
+      // The API returns a field map on 422 — surface it inline rather than as
+      // one toast the user then has to map back onto the form themselves.
+      if (e.errors) {
+        setErrs({
+          first:   e.errors.first_name?.[0] ?? '',
+          middle:  e.errors.middle_name?.[0] ?? '',
+          last:    e.errors.last_name?.[0] ?? '',
+          company: e.errors.company_name?.[0] ?? '',
+          email:   e.errors.email?.[0] ?? '',
+          phone:   e.errors.phone?.[0] ?? '',
+          address: e.errors.address?.[0] ?? '',
+          city:    e.errors.city?.[0] ?? '',
+          state:   e.errors.state?.[0] ?? '',
+        });
+        toast.error('Check the highlighted fields.', 'Couldn’t add customer');
+      } else {
+        toast.error(e.message, 'Couldn’t add customer');
       }
-      toast.error(e instanceof ApiError ? e.message : 'Failed to create customer.');
-    },
-  });
+      setBusy(false);
+    }
+  }, [busy, validate, first, middle, last, company, email, phone, address, city, state,
+      queryClient, router]);
 
-  function validate() {
-    const errs: Record<string, string> = {};
-    if (!firstName.trim())   errs.first_name   = 'First name is required.';
-    if (!lastName.trim())    errs.last_name    = 'Last name is required.';
-    if (!companyName.trim()) errs.company_name = 'Pharmacy / company name is required.';
-    if (!email.trim())       errs.email        = 'Email is required.';
-    if (!phone.trim())       errs.phone        = 'Phone number is required.';
-    if (!address.trim())     errs.address      = 'Address is required.';
-    if (!city.trim())        errs.city         = 'City is required.';
-    if (!state.trim())       errs.state        = 'State is required.';
-    setErrors(errs);
-    return Object.keys(errs).length === 0;
-  }
-
-  function handleSubmit() {
-    if (!validate()) return;
-    createCustomer.mutate();
-  }
+  const filteredStates = useMemo(
+    () => NIGERIAN_STATES.filter(s => s.toLowerCase().includes(state.toLowerCase())),
+    [state],
+  );
 
   return (
-    <KeyboardAvoidingView
-      style={{ flex: 1, backgroundColor: Colors.bg }}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-    >
-      <ScreenHeader title="Add Customer" back onBack={() => router.back()} />
+    <View style={{ flex: 1, backgroundColor: color.bg }}>
+      <SafeAreaView style={{ flex: 1 }} edges={['top']}>
+        <ScreenHeader
+          variant="compact"
+          back
+          title="Add customer"
+          subtitle="They’ll be emailed an invitation"
+        />
 
-      <ScrollView
-        contentContainerStyle={[styles.scroll, { paddingBottom: insets.bottom + 110 }]}
-        keyboardShouldPersistTaps="handled"
-        showsVerticalScrollIndicator={false}
-      >
-        {/* Personal */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Personal Information</Text>
-          <Input label="First Name *"         placeholder="e.g. Adeola"           value={firstName}   onChangeText={setFirstName}   error={errors.first_name} />
-          <Input label="Middle Name"          placeholder="Optional"               value={middleName}  onChangeText={setMiddleName} />
-          <Input label="Last Name *"          placeholder="e.g. Adeyemi"          value={lastName}    onChangeText={setLastName}    error={errors.last_name} />
-          <Input label="Email Address *"      placeholder="customer@example.com"  value={email}       onChangeText={setEmail}       error={errors.email}      keyboardType="email-address" autoCapitalize="none" />
-          <Input label="Phone Number *"       placeholder="+234 800 000 0000"     value={phone}       onChangeText={setPhone}       error={errors.phone}      keyboardType="phone-pad" />
-        </View>
+        <KeyboardAvoidingView
+          style={{ flex: 1 }}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          keyboardVerticalOffset={insets.top + 56}
+        >
+          <ScrollView
+            contentContainerStyle={{ padding: gutter, gap: space.xl, paddingBottom: 160 }}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+          >
+            <Animated.View entering={FadeInDown.duration(320)}>
+              <Surface tone="subtle" level="none" padded="base" rounded="lg">
+                <View style={{ flexDirection: 'row', gap: space.sm }}>
+                  <Icon name="info" size={16} color={color.accent} filled />
+                  <Text variant="caption" tone="secondary" style={{ flex: 1 }}>
+                    They set their own password and upload their PCN certificate from
+                    the invitation email. The account stays unapproved until someone
+                    verifies that certificate.
+                  </Text>
+                </View>
+              </Surface>
+            </Animated.View>
 
-        {/* Business */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Pharmacy / Business</Text>
-          <Input label="Pharmacy / Company Name *" placeholder="e.g. Envolve Pharm Ltd" value={companyName} onChangeText={setCompanyName} error={errors.company_name} />
-        </View>
+            {/* ── Contact ── */}
+            <Group index={0} title="Main contact">
+              <View style={{ flexDirection: 'row', gap: space.md }}>
+                <Input
+                  label="First name"
+                  value={first}
+                  onChangeText={v => { setFirst(v); clear('first'); }}
+                  error={errs.first}
+                  autoCapitalize="words"
+                  editable={!busy}
+                  required
+                  containerStyle={{ flex: 1 }}
+                />
+                <Input
+                  label="Last name"
+                  value={last}
+                  onChangeText={v => { setLast(v); clear('last'); }}
+                  error={errs.last}
+                  autoCapitalize="words"
+                  editable={!busy}
+                  required
+                  containerStyle={{ flex: 1 }}
+                />
+              </View>
 
-        {/* Address */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Address</Text>
-          <Input label="Street Address *" placeholder="e.g. 12 Lagos Street, Ikeja" value={address} onChangeText={setAddress} error={errors.address} multiline numberOfLines={2} />
-          <Input label="City *"  placeholder="e.g. Lagos"  value={city}  onChangeText={setCity}  error={errors.city} />
-
-          {/* State picker — simple inline list */}
-          <Text style={styles.fieldLabel}>State *</Text>
-          <View style={styles.stateGrid}>
-            {NIGERIAN_STATES.map(s => (
-              <Pressable2
-                key={s}
-                selected={state === s}
-                onPress={() => setState(s)}
-                label={s}
+              <Input
+                label="Middle name"
+                placeholder="Optional"
+                value={middle}
+                onChangeText={v => { setMiddle(v); clear('middle'); }}
+                error={errs.middle}
+                autoCapitalize="words"
+                editable={!busy}
               />
-            ))}
-          </View>
-          {errors.state ? <Text style={styles.fieldError}>{errors.state}</Text> : null}
-        </View>
 
-        {/* Info box */}
-        <View style={styles.infoBox}>
-          <Text style={styles.infoText}>
-            An invitation email with a one-time password (OTP) will be sent to the customer so they can verify their account and set up a password.
-          </Text>
-        </View>
-      </ScrollView>
+              <Input
+                label="Email"
+                placeholder="buyer@pharmacy.com"
+                value={email}
+                onChangeText={v => { setEmail(v); clear('email'); }}
+                error={errs.email}
+                keyboardType="email-address"
+                autoCapitalize="none"
+                autoCorrect={false}
+                editable={!busy}
+                required
+                leading={<Icon name="email" size={17} color={color.textTertiary} />}
+              />
 
-      <View style={[styles.footer, { paddingBottom: insets.bottom + 16 }]}>
-        <Button variant="primary" size="lg" fullWidth loading={createCustomer.isPending} onPress={handleSubmit}>
-          Add Customer & Send Invite
-        </Button>
-      </View>
-    </KeyboardAvoidingView>
+              <Input
+                label="Phone"
+                placeholder="0805 513 6726"
+                value={phone}
+                onChangeText={v => { setPhone(v); clear('phone'); }}
+                error={errs.phone}
+                keyboardType="phone-pad"
+                editable={!busy}
+                required
+                leading={<Icon name="phone" size={17} color={color.textTertiary} />}
+              />
+            </Group>
+
+            {/* ── Business ── */}
+            <Group index={1} title="Pharmacy">
+              <Input
+                label="Pharmacy / company name"
+                value={company}
+                onChangeText={v => { setCompany(v); clear('company'); }}
+                error={errs.company}
+                autoCapitalize="words"
+                editable={!busy}
+                required
+                leading={<Icon name="building" size={17} color={color.textTertiary} />}
+              />
+
+              <Input
+                label="Street address"
+                value={address}
+                onChangeText={v => { setAddress(v); clear('address'); }}
+                error={errs.address}
+                editable={!busy}
+                multiline
+                required
+                leading={<Icon name="location" size={17} color={color.textTertiary} />}
+              />
+
+              <Input
+                label="City"
+                value={city}
+                onChangeText={v => { setCity(v); clear('city'); }}
+                error={errs.city}
+                editable={!busy}
+                required
+              />
+
+              <View style={{ gap: space.sm }}>
+                <Input
+                  label="State"
+                  placeholder="Start typing, then pick from the list"
+                  value={state}
+                  onChangeText={v => { setState(v); clear('state'); setStatePicker(true); }}
+                  onFocus={() => setStatePicker(true)}
+                  error={errs.state}
+                  editable={!busy}
+                  required
+                  autoCapitalize="words"
+                  trailing={<Icon name={statePicker ? 'chevron-up' : 'chevron-down'} size={16} color={color.textTertiary} />}
+                  onTrailingPress={() => setStatePicker(p => !p)}
+                />
+
+                {statePicker && filteredStates.length > 0 ? (
+                  <Animated.View entering={FadeIn.duration(200)}>
+                    <Surface level="sm" padded="none" rounded="lg">
+                      <ScrollView
+                        style={{ maxHeight: 200 }}
+                        keyboardShouldPersistTaps="handled"
+                        nestedScrollEnabled
+                      >
+                        {filteredStates.map((s, i, arr) => (
+                          <Pressable
+                            key={s}
+                            onPress={() => { setState(s); setStatePicker(false); clear('state'); }}
+                            haptic="light"
+                            pressOpacity={0.6}
+                            style={{
+                              paddingHorizontal: space.base,
+                              paddingVertical: space.md,
+                              minHeight: layout.tapTarget,
+                              justifyContent: 'center',
+                              borderBottomWidth: i === arr.length - 1 ? 0 : layout.hairlineWidth,
+                              borderBottomColor: color.borderSubtle,
+                            }}
+                          >
+                            <Text variant="body">{s}</Text>
+                          </Pressable>
+                        ))}
+                      </ScrollView>
+                    </Surface>
+                  </Animated.View>
+                ) : null}
+              </View>
+            </Group>
+          </ScrollView>
+        </KeyboardAvoidingView>
+
+        <View
+          style={{
+            position: 'absolute', left: 0, right: 0, bottom: 0,
+            paddingHorizontal: gutter,
+            paddingTop: space.base,
+            paddingBottom: Math.max(insets.bottom, space.base),
+            backgroundColor: color.surface,
+            borderTopWidth: layout.hairlineWidth,
+            borderTopColor: color.border,
+          }}
+        >
+          <Button
+            size="lg"
+            fullWidth
+            loading={busy}
+            disabled={busy}
+            onPress={submit}
+            haptic="medium"
+          >
+            {busy ? 'Adding…' : 'Add customer & send invite'}
+          </Button>
+        </View>
+      </SafeAreaView>
+    </View>
   );
 }
 
-// ── Inline Pressable for state selection ─────────────────────────────────────
-import { Pressable } from 'react-native';
-
-function Pressable2({ selected, onPress, label }: { selected: boolean; onPress: () => void; label: string }) {
+function Group({ index, title, children }: {
+  index: number; title: string; children: React.ReactNode;
+}) {
   return (
-    <Pressable
-      style={[styles.stateChip, selected && styles.stateChipActive]}
-      onPress={onPress}
-    >
-      <Text style={[styles.stateChipText, selected && styles.stateChipTextActive]}>{label}</Text>
-    </Pressable>
+    <Animated.View entering={FadeInDown.delay(60 + index * 60).duration(320)} style={{ gap: space.md }}>
+      <Text variant="overline" tone="tertiary">{title}</Text>
+      <View style={{ gap: space.md }}>{children}</View>
+    </Animated.View>
   );
 }
-
-const styles = StyleSheet.create({
-  scroll:       { padding: 20, gap: 4 },
-  section:      { marginBottom: 24 },
-  sectionTitle: { ...type.h3, color: Colors.ink, marginBottom: 14 },
-
-  fieldLabel: { ...type.label, color: Colors.ink2, marginBottom: 8 },
-  fieldError: { ...type.caption, color: Colors.danger, marginTop: 4 },
-
-  stateGrid:         { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  stateChip:         { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10, backgroundColor: Colors.white, borderWidth: 1.5, borderColor: Colors.line },
-  stateChipActive:   { borderColor: Colors.brand, backgroundColor: Colors.brandLight },
-  stateChipText:     { ...type.btnSm, color: Colors.ink3 },
-  stateChipTextActive: { color: Colors.brand },
-
-  infoBox: {
-    backgroundColor: Colors.brandLight,
-    borderRadius:    14,
-    padding:         14,
-    marginBottom:    16,
-    borderLeftWidth: 3,
-    borderLeftColor: Colors.brand,
-  },
-  infoText: { ...type.bodySm, color: Colors.brandDark, lineHeight: 20 },
-
-  footer: {
-    position:        'absolute',
-    bottom:          0, left: 0, right: 0,
-    padding:         16,
-    paddingTop:      12,
-    backgroundColor: Colors.white,
-    borderTopWidth:  0.5,
-    borderTopColor:  Colors.line,
-  },
-});

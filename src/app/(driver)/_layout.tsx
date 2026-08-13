@@ -1,65 +1,39 @@
+/**
+ * Driver navigation.
+ *
+ * Three tabs, because a driver on a motorcycle in Lagos traffic has one hand
+ * and about two seconds. Everything that isn't "what am I delivering right
+ * now" is one tap away, not zero.
+ *
+ * `/api/deliveries` scopes itself to the signed-in driver, so none of these
+ * screens filter by driver id — the server already did.
+ */
+
+import React from 'react';
 import { Tabs } from 'expo-router';
-import { Platform } from 'react-native';
-import { Colors } from '@/constants/colors';
-import { Icon } from '@/components/ui/Icon';
+
+import { TabBar, type TabConfig } from '@/components/navigation/TabBar';
+
+const TABS: TabConfig[] = [
+  { name: 'deliveries/index', label: 'Today',   icon: 'truck' },
+  { name: 'history',          label: 'History', icon: 'clipboard' },
+  { name: 'profile',          label: 'Account', icon: 'profile' },
+];
 
 export default function DriverLayout() {
   return (
     <Tabs
-      screenOptions={{
-        headerShown:             false,
-        tabBarActiveTintColor:   Colors.brand,
-        tabBarInactiveTintColor: Colors.ink4,
-        tabBarStyle: {
-          borderTopWidth:  0.5,
-          borderTopColor:  Colors.line,
-          backgroundColor: Colors.white,
-          paddingTop:      6,
-          paddingBottom:   Platform.OS === 'ios' ? 20 : 8,
-          height:          Platform.OS === 'ios' ? 82 : 64,
-          elevation:       8,
-          shadowColor:     '#000',
-          shadowOpacity:   0.06,
-          shadowRadius:    12,
-          shadowOffset:    { width: 0, height: -2 },
-        },
-        tabBarLabelStyle: {
-          fontSize:      10,
-          fontWeight:    '600',
-          letterSpacing: 0.2,
-          marginTop:     2,
-        },
-      }}
+      screenOptions={{ headerShown: false }}
+      tabBar={props => (
+        <TabBar state={props.state} navigation={props.navigation} tabs={TABS} />
+      )}
     >
-      <Tabs.Screen
-        name="deliveries/index"
-        options={{
-          title: 'Deliveries',
-          tabBarIcon: ({ color, size }) => (
-            <Icon name="delivery" size={size ?? 22} color={color} />
-          ),
-        }}
-      />
-      <Tabs.Screen
-        name="history"
-        options={{
-          title: 'History',
-          tabBarIcon: ({ color, size }) => (
-            <Icon name="clock" size={size ?? 22} color={color} />
-          ),
-        }}
-      />
-      <Tabs.Screen
-        name="profile"
-        options={{
-          title: 'Profile',
-          tabBarIcon: ({ color, size }) => (
-            <Icon name="profile" size={size ?? 22} color={color} />
-          ),
-        }}
-      />
-      {/* Hidden */}
-      <Tabs.Screen name="deliveries/[id]" options={{ href: null }} />
+      <Tabs.Screen name="deliveries/index" options={{ title: 'Today' }} />
+      <Tabs.Screen name="history"          options={{ title: 'History' }} />
+      <Tabs.Screen name="profile"          options={{ title: 'Account' }} />
+
+      {/* Pushed route — part of the stack, never a tab. */}
+      <Tabs.Screen name="deliveries/[id]"  options={{ href: null }} />
     </Tabs>
   );
 }

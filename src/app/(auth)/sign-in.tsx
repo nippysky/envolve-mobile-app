@@ -1,182 +1,171 @@
 /**
- * Role Selection Screen — auth entry point.
- * Two cards: Customer and Staff/Admin/Driver.
- * Guests can also browse the public catalogue without logging in.
+ * Role selection.
+ *
+ * Two doors: customer and staff. Mirrors the web, which splits these because
+ * the two audiences authenticate against different endpoints and land in
+ * completely different products.
+ *
+ * The cards stagger in on mount — 60ms apart. Simultaneous entrance reads as a
+ * single block; staggered reads as composed.
  */
 
 import React from 'react';
-import {
-  Image,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native';
-import { router } from 'expo-router';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Colors } from '@/constants/colors';
-import { type } from '@/constants/typography';
-import { Icon, type IconName } from '@/components/ui/Icon';
+import { View, ScrollView } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { useRouter } from 'expo-router';
+import { LinearGradient } from 'expo-linear-gradient';
+import Animated, { FadeInDown, FadeIn } from 'react-native-reanimated';
 
-interface RoleCard {
-  iconName: IconName;
-  title:    string;
-  desc:     string;
-  accent:   string;
-  tint:     string;
-  route:    string;
+import { Text, Pressable, Icon, Surface } from '@/components/ui';
+import { color, space, radius, gutter, elevation } from '@/constants/theme';
+import { Logo } from '@/components/shared/Logo';
+
+interface Door {
+  key:   string;
+  icon:  React.ComponentProps<typeof Icon>['name'];
+  title: string;
+  body:  string;
+  href:  string;
+  tint:  string;
 }
 
-const ROLES: RoleCard[] = [
+const DOORS: Door[] = [
   {
-    iconName: 'shop',
-    title:    'Customer',
-    desc:     'Shop, order medicines & track your deliveries',
-    accent:   Colors.brand,
-    tint:     Colors.brandLight,
-    route:    '/(auth)/customer-login',
+    key:   'customer',
+    icon:  'shop',
+    title: 'Pharmacy account',
+    body:  'Browse the catalogue, place orders and track deliveries.',
+    href:  '/(auth)/customer-login',
+    tint:  color.brand,
   },
   {
-    iconName: 'team',
-    title:    'Staff / Admin / Driver',
-    desc:     'Pharmacists, admins, managers & delivery drivers',
-    accent:   Colors.teal,
-    tint:     Colors.tealLight,
-    route:    '/(auth)/staff-login',
+    key:   'staff',
+    icon:  'shield',
+    title: 'Staff & drivers',
+    body:  'Operations console and delivery assignments.',
+    href:  '/(auth)/staff-login',
+    tint:  color.accent,
   },
 ];
 
-export default function RoleSelect() {
-  const insets = useSafeAreaInsets();
-
+function DoorCard({ door, index, onPress }: {
+  door: Door; index: number; onPress: () => void;
+}) {
   return (
-    <ScrollView
-      contentContainerStyle={[
-        styles.scroll,
-        { paddingTop: insets.top + 40, paddingBottom: insets.bottom + 40 },
-      ]}
-      showsVerticalScrollIndicator={false}
-      style={styles.root}
-    >
-      {/* Brand */}
-      <View style={styles.header}>
-        <Image
-          source={require('../../../assets/images/logo.png')}
-          style={styles.logo}
-          resizeMode="contain"
-        />
-        <Text style={styles.tagline}>Your pharmacy, delivered</Text>
-      </View>
+    <Animated.View entering={FadeInDown.delay(120 + index * 60).duration(420)}>
+      <Pressable onPress={onPress} haptic="medium" pressScale={0.98}>
+        <Surface level="md" rounded="xl" padded="lg">
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.base }}>
+            <View
+              style={{
+                width: 52, height: 52,
+                borderRadius: radius.lg,
+                backgroundColor: `${door.tint}14`,
+                alignItems: 'center', justifyContent: 'center',
+              }}
+            >
+              <Icon name={door.icon} size={24} color={door.tint} filled />
+            </View>
 
-      {/* Headline */}
-      <Text style={styles.heroTitle}>Welcome back</Text>
-      <Text style={styles.heroSub}>Select your role to continue</Text>
+            <View style={{ flex: 1, gap: 2 }}>
+              <Text variant="headline">{door.title}</Text>
+              <Text variant="callout" tone="tertiary">{door.body}</Text>
+            </View>
 
-      {/* Role cards */}
-      <View style={styles.cards}>
-        {ROLES.map((role) => (
-          <RoleCardBtn key={role.title} role={role} />
-        ))}
-      </View>
-
-      {/* Browse catalogue without login */}
-      <Pressable
-        style={styles.guestBtn}
-        onPress={() => router.push('/(public)/catalogue')}
-      >
-        <Icon name="product" size={16} color={Colors.ink3} />
-        <Text style={styles.guestBtnText}>Browse catalogue without signing in</Text>
-        <Icon name="chevron-right" size={16} color={Colors.ink4} />
+            <Icon name="chevron-right" size={18} color={color.textDisabled} />
+          </View>
+        </Surface>
       </Pressable>
-
-      {/* Legal */}
-      <Text style={styles.legalText}>
-        By signing in you agree to our{' '}
-        <Text style={styles.legalLink} onPress={() => router.push('/terms')}>Terms</Text>
-        {' '}and{' '}
-        <Text style={styles.legalLink} onPress={() => router.push('/privacy')}>Privacy Policy</Text>
-      </Text>
-    </ScrollView>
+    </Animated.View>
   );
 }
 
-function RoleCardBtn({ role }: { role: RoleCard }) {
+export default function RoleSelectScreen() {
+  const router = useRouter();
+
   return (
-    <Pressable
-      style={({ pressed }) => [
-        styles.card,
-        { borderLeftColor: role.accent, borderLeftWidth: 4 },
-        pressed && styles.cardPressed,
-      ]}
-      onPress={() => router.push(role.route as any)}
-    >
-      <View style={[styles.iconWrap, { backgroundColor: role.tint }]}>
-        <Icon name={role.iconName} size={24} color={role.accent} />
-      </View>
-      <View style={styles.cardBody}>
-        <Text style={[styles.cardTitle, { color: role.accent }]}>{role.title}</Text>
-        <Text style={styles.cardDesc}>{role.desc}</Text>
-      </View>
-      <Icon name="chevron-right" size={18} color={role.accent} />
-    </Pressable>
+    <View style={{ flex: 1, backgroundColor: color.bg }}>
+      <LinearGradient
+        colors={[`${color.brand}12`, 'transparent']}
+        style={{ position: 'absolute', left: 0, right: 0, top: 0, height: 360 }}
+      />
+
+      <SafeAreaView style={{ flex: 1 }} edges={['top', 'bottom']}>
+        <ScrollView
+          contentContainerStyle={{
+            flexGrow: 1,
+            paddingHorizontal: gutter,
+            paddingBottom: space.xl,
+          }}
+          keyboardShouldPersistTaps="handled"
+        >
+          {/* Brand */}
+          <Animated.View
+            entering={FadeIn.duration(500)}
+            style={{ alignItems: 'center', paddingTop: space['3xl'], paddingBottom: space['2xl'] }}
+          >
+            <Logo size={56} />
+          </Animated.View>
+
+          {/* Heading */}
+          <Animated.View entering={FadeInDown.duration(420)} style={{ marginBottom: space['2xl'] }}>
+            <Text variant="title1" align="center" style={{ marginBottom: space.sm }}>
+              Welcome back
+            </Text>
+            <Text variant="body" tone="secondary" align="center">
+              Choose how you&rsquo;d like to sign in.
+            </Text>
+          </Animated.View>
+
+          {/* Doors */}
+          <View style={{ gap: space.md }}>
+            {DOORS.map((d, i) => (
+              <DoorCard
+                key={d.key}
+                door={d}
+                index={i}
+                onPress={() => router.push(d.href as never)}
+              />
+            ))}
+          </View>
+
+          <View style={{ flex: 1, minHeight: space['2xl'] }} />
+
+          {/* Secondary paths */}
+          <Animated.View entering={FadeInDown.delay(280).duration(420)} style={{ gap: space.base }}>
+            <Pressable
+              onPress={() => router.push('/(auth)/sign-up')}
+              haptic="light"
+              pressOpacity={0.6}
+              style={{
+                paddingVertical: space.md,
+                alignItems: 'center',
+                borderRadius: radius.md,
+                borderWidth: 1,
+                borderColor: color.border,
+                backgroundColor: color.surface,
+                ...elevation.sm,
+              }}
+            >
+              <Text variant="bodyMedium">
+                New pharmacy?{' '}
+                <Text variant="bodyMedium" tone="brand" weight="600">Create an account</Text>
+              </Text>
+            </Pressable>
+
+            <Pressable
+              onPress={() => router.push('/(public)/catalogue')}
+              haptic="light"
+              pressOpacity={0.6}
+              style={{ alignItems: 'center', paddingVertical: space.sm }}
+            >
+              <Text variant="callout" tone="tertiary">
+                Browse the catalogue without signing in
+              </Text>
+            </Pressable>
+          </Animated.View>
+        </ScrollView>
+      </SafeAreaView>
+    </View>
   );
 }
-
-const styles = StyleSheet.create({
-  root:   { flex: 1, backgroundColor: Colors.bg },
-  scroll: { paddingHorizontal: 24 },
-
-  header: { alignItems: 'center', marginBottom: 36 },
-  logo:   { width: 200, height: 73, marginBottom: 10 },
-  tagline:{ ...type.caption, color: Colors.ink3, letterSpacing: 0.3 },
-
-  heroTitle: { ...type.title, color: Colors.ink, marginBottom: 4 },
-  heroSub:   { ...type.body, color: Colors.ink3, marginBottom: 28 },
-
-  cards: { gap: 14 },
-
-  card: {
-    flexDirection:   'row',
-    alignItems:      'center',
-    backgroundColor: Colors.white,
-    borderRadius:    16,
-    padding:         18,
-    gap:             14,
-    shadowColor:     '#000',
-    shadowOpacity:   0.06,
-    shadowRadius:    12,
-    shadowOffset:    { width: 0, height: 2 },
-    elevation:       2,
-    borderWidth:     1,
-    borderColor:     Colors.line,
-  },
-  cardPressed: { opacity: 0.82, transform: [{ scale: 0.985 }] },
-
-  iconWrap: {
-    width: 52, height: 52, borderRadius: 16,
-    alignItems: 'center', justifyContent: 'center',
-  },
-  cardBody:  { flex: 1 },
-  cardTitle: { ...type.h3, marginBottom: 2 },
-  cardDesc:  { ...type.caption, color: Colors.ink3, lineHeight: 18 },
-
-  guestBtn: {
-    flexDirection:   'row',
-    alignItems:      'center',
-    gap:             8,
-    paddingVertical: 16,
-    marginTop:       24,
-    justifyContent:  'center',
-  },
-  guestBtnText: { ...type.bodyMed, color: Colors.ink3 },
-
-  legalText: {
-    ...type.caption,
-    color:     Colors.ink4,
-    textAlign: 'center',
-    lineHeight: 18,
-    marginTop: 12,
-  },
-  legalLink: { color: Colors.brand, fontWeight: '600' },
-});

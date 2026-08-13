@@ -1,232 +1,168 @@
 /**
- * Staff / Admin / Driver Login Screen
+ * Staff, admin and driver sign-in.
  *
- * Accepts ?type=staff|admin|driver to show role-specific copy & colour.
- * All non-customer roles authenticate via POST /api/auth/staff/login.
- * AuthContext.login() then routes to the correct stack based on the
- * returned user.role (STAFF → /(staff)/overview, DRIVER → /(driver)/deliveries).
+ * One endpoint for all three internal roles — POST /api/auth/staff/login. The
+ * role comes back on the user object and AuthContext routes accordingly, so
+ * this screen doesn't need to know where anyone lands.
+ *
+ * Visually distinguished from the customer door by the accent colour: staff
+ * are entering an operations console, not a shop.
  */
 
-import React, { useState } from 'react';
-import {
-  Image,
-  KeyboardAvoidingView,
-  Platform,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native';
-import { router } from 'expo-router';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Colors } from '@/constants/colors';
-import { Button } from '@/components/ui/Button';
-import { Input } from '@/components/ui/Input';
+import React, { useCallback, useRef, useState } from 'react';
+import { View, type TextInput } from 'react-native';
+import { useRouter } from 'expo-router';
+
+import { AuthScreen } from '@/components/shared/AuthScreen';
+import { Text, Button, Input, Pressable, Icon, Surface } from '@/components/ui';
+import { color, space } from '@/constants/theme';
 import { useAuth } from '@/contexts/AuthContext';
-import { api, ApiError } from '@/lib/api-client';
-import type { AppUser } from '@/contexts/AuthContext';
+import { loginStaff } from '@/lib/services/auth.service';
 
-interface LoginData {
-  user:   AppUser;
-  tokens: {
-    access_token:  string;
-    refresh_token: string;
-    expires_in:    number;
-  };
-}
+export default function StaffLoginScreen() {
+  const router = useRouter();
+  const { signIn } = useAuth();
 
-// All non-customer roles share the staff endpoint.
-// The backend JWT determines the actual role (STAFF | ADMIN | SUPER_ADMIN | DRIVER)
-// and AuthContext routes each to their correct stack automatically.
-const STAFF_CONFIG = {
-  label:       'Staff / Admin / Driver',
-  badgeColor:  Colors.teal,
-  badgeBg:     Colors.tealLight,
-  title:       'Staff portal sign-in',
-  subtitle:    'For pharmacists, admins, managers & delivery drivers',
-  placeholder: 'work@envolvepharma.com',
-} as const;
-
-export default function StaffLogin() {
-  const insets    = useSafeAreaInsets();
-  const { login } = useAuth();
-  const config = STAFF_CONFIG;
+  const passwordRef = useRef<TextInput>(null);
 
   const [email,    setEmail]    = useState('');
   const [password, setPassword] = useState('');
-  const [showPwd,  setShowPwd]  = useState(false);
-  const [loading,  setLoading]  = useState(false);
+  const [reveal,   setReveal]   = useState(false);
+  const [busy,     setBusy]     = useState(false);
   const [error,    setError]    = useState('');
+  const [errs,     setErrs]     = useState<Record<string, string>>({});
 
-  async function handleLogin() {
-    if (!email.trim() || !password) {
-      setError('Please enter your email and password.');
-      return;
-    }
+  const submit = useCallback(async () => {
+    if (busy) return;
+
+    const e: Record<string, string> = {};
+    if (!email.trim())             e.email    = 'Enter your work email';
+    else if (!email.includes('@')) e.email    = 'That email doesn’t look right';
+    if (!password)                 e.password = 'Enter your password';
+    setErrs(e);
+    if (Object.keys(e).length) return;
+
+    setBusy(true);
     setError('');
-    setLoading(true);
+
     try {
-      const res = await api.post<LoginData>('/api/auth/staff/login', {
-        email:    email.trim().toLowerCase(),
-        password,
-      });
-      await login(res.user, res.tokens.access_token, res.tokens.refresh_token);
-    } catch (e) {
-      setError(e instanceof ApiError ? e.message : 'Something went wrong. Please try again.');
-    } finally {
-      setLoading(false);
+      const res = await loginStaff(email, password);
+
+      // Belt-and-braces: the API already rejects non-ACTIVE accounts with 403,
+      // but a disabled account slipping through would land in the console.
+      if (res.user.status && res.user.status.toUpperCase() !== 'ACTIVE') {
+        setError(`Your account is ${res.user.status.toLowerCase()}. Contact your administrator.`);
+        setBusy(false);
+        return;
+      }
+
+      // signIn routes by role — admin/staff to the console, drivers to their
+      // assignments. Left locked until this screen unmounts.
+      await signIn(res.user, res.tokens);
+    } catch (err) {
+      const e2 = err as Error & { status?: number };
+      setError(
+        e2.status === 401 ? 'Email or password is incorrect.'
+        : e2.status === 403 ? e2.message
+        : e2.message || 'Could not sign you in. Please try again.',
+      );
+      setBusy(false);
     }
-  }
+  }, [busy, email, password, signIn]);
 
   return (
-    <KeyboardAvoidingView
-      style={{ flex: 1, backgroundColor: Colors.bg }}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-    >
-      <ScrollView
-        contentContainerStyle={[
-          styles.scroll,
-          { paddingTop: insets.top + 16, paddingBottom: insets.bottom + 32 },
-        ]}
-        keyboardShouldPersistTaps="handled"
-        showsVerticalScrollIndicator={false}
-      >
-        {/* Back */}
-        <Pressable onPress={() => router.back()} style={styles.backBtn}>
-          <Text style={styles.backText}>‹ Back</Text>
+    <AuthScreen
+      eyebrow="Operations"
+      title="Staff sign in"
+      subtitle="For team members and drivers. Access is scoped to your role automatically."
+      footer={
+        <Pressable
+          onPress={() => router.replace('/(auth)/customer-login')}
+          haptic="light"
+          pressOpacity={0.6}
+          style={{ alignItems: 'center', paddingVertical: space.md }}
+        >
+          <Text variant="callout" tone="tertiary">
+            Not staff?{' '}
+            <Text variant="callout" tone="brand" weight="600">Pharmacy sign in</Text>
+          </Text>
         </Pressable>
-
-        {/* Header */}
-        <View style={styles.header}>
-          <Image
-            source={require('../../../assets/images/logo.png')}
-            style={styles.logo}
-            resizeMode="contain"
-          />
-          <View style={[styles.badge, { backgroundColor: config.badgeBg }]}>
-            <Text style={[styles.badgeText, { color: config.badgeColor }]}>
-              {config.label}
+      }
+    >
+      <View style={{ gap: space.base }}>
+        <Surface tone="subtle" level="none" padded="md" rounded="md">
+          <View style={{ flexDirection: 'row', gap: space.sm, alignItems: 'center' }}>
+            <Icon name="shield" size={16} color={color.accent} filled />
+            <Text variant="caption" tone="secondary" style={{ flex: 1 }}>
+              Every action in the console is recorded against your name.
             </Text>
           </View>
-        </View>
+        </Surface>
 
-        <Text style={styles.title}>{config.title}</Text>
-        <Text style={styles.subtitle}>{config.subtitle}</Text>
-
-        {/* Form card */}
-        <View style={[styles.card, { borderTopColor: config.badgeColor, borderTopWidth: 3 }]}>
-          {error ? (
-            <View style={styles.errorBox}>
-              <Text style={styles.errorText}>{error}</Text>
+        {error ? (
+          <Surface tone="danger" level="none" padded="md" rounded="md">
+            <View style={{ flexDirection: 'row', gap: space.sm, alignItems: 'flex-start' }}>
+              <Icon name="alert" size={16} color={color.danger} filled />
+              <Text variant="callout" style={{ flex: 1, color: '#991b1b' }}>{error}</Text>
             </View>
-          ) : null}
+          </Surface>
+        ) : null}
 
-          <Input
-            label="Work email"
-            placeholder={config.placeholder}
-            value={email}
-            onChangeText={setEmail}
-            autoCapitalize="none"
-            keyboardType="email-address"
-            autoCorrect={false}
-            returnKeyType="next"
-          />
+        <Input
+          label="Work email"
+          placeholder="you@envolvepharm.com.ng"
+          value={email}
+          onChangeText={t => { setEmail(t); setErrs(p => ({ ...p, email: '' })); }}
+          error={errs.email}
+          keyboardType="email-address"
+          autoCapitalize="none"
+          autoComplete="email"
+          textContentType="emailAddress"
+          returnKeyType="next"
+          onSubmitEditing={() => passwordRef.current?.focus()}
+          leading={<Icon name="email" size={17} color={color.textTertiary} />}
+          editable={!busy}
+        />
 
-          <Input
-            label="Password"
-            placeholder="••••••••"
-            value={password}
-            onChangeText={setPassword}
-            secureTextEntry={!showPwd}
-            returnKeyType="done"
-            onSubmitEditing={handleLogin}
-            rightIcon={<Text style={styles.eyeIcon}>{showPwd ? '🙈' : '👁️'}</Text>}
-            onRightPress={() => setShowPwd(v => !v)}
-          />
+        <Input
+          ref={passwordRef}
+          label="Password"
+          placeholder="••••••••"
+          value={password}
+          onChangeText={t => { setPassword(t); setErrs(p => ({ ...p, password: '' })); }}
+          error={errs.password}
+          secureTextEntry={!reveal}
+          autoCapitalize="none"
+          autoComplete="current-password"
+          textContentType="password"
+          returnKeyType="go"
+          onSubmitEditing={() => void submit()}
+          leading={<Icon name="lock" size={17} color={color.textTertiary} />}
+          trailing={<Icon name={reveal ? 'eye-off' : 'eye'} size={18} color={color.textTertiary} />}
+          onTrailingPress={() => setReveal(r => !r)}
+          editable={!busy}
+        />
 
-          <Pressable
-            onPress={() => router.push('/(auth)/forgot-password?role=staff')}
-            style={styles.forgotBtn}
-          >
-            <Text style={styles.forgotText}>Forgot password?</Text>
-          </Pressable>
+        <Pressable
+          onPress={() => router.push('/(auth)/forgot-password?audience=staff')}
+          haptic="light"
+          pressOpacity={0.6}
+          style={{ alignSelf: 'flex-end', paddingVertical: space.xs }}
+        >
+          <Text variant="label" tone="brand">Forgot password?</Text>
+        </Pressable>
 
-          <Button
-            variant="primary"
-            size="lg"
-            fullWidth
-            loading={loading}
-            onPress={handleLogin}
-          >
-            Sign In
-          </Button>
-        </View>
-
-        {/* Security note */}
-        <Text style={styles.note}>
-          🔒 Restricted access. Authorised Envolve Pharma personnel only.
-        </Text>
-      </ScrollView>
-    </KeyboardAvoidingView>
+        <Button
+          size="lg"
+          fullWidth
+          loading={busy}
+          disabled={busy}
+          onPress={submit}
+          haptic="medium"
+        >
+          {busy ? 'Signing in…' : 'Sign in to console'}
+        </Button>
+      </View>
+    </AuthScreen>
   );
 }
-
-const styles = StyleSheet.create({
-  scroll: { flexGrow: 1, paddingHorizontal: 24 },
-
-  backBtn:  { marginBottom: 24 },
-  backText: { fontSize: 16, color: Colors.brand, fontWeight: '600' },
-
-  header: {
-    flexDirection:  'row',
-    alignItems:     'center',
-    gap:            14,
-    marginBottom:   28,
-  },
-  logo: { width: 140, height: 51 },
-  badge: {
-    paddingHorizontal: 12,
-    paddingVertical:    5,
-    borderRadius:       20,
-  },
-  badgeText: { fontSize: 13, fontWeight: '700' },
-
-  title:    { fontSize: 26, fontWeight: '800', color: Colors.ink, marginBottom: 6, letterSpacing: -0.3 },
-  subtitle: { fontSize: 14, color: Colors.ink3, marginBottom: 28, lineHeight: 21 },
-
-  card: {
-    backgroundColor: Colors.white,
-    borderRadius:    16,
-    padding:         24,
-    shadowColor:     '#000',
-    shadowOpacity:   0.06,
-    shadowRadius:    14,
-    shadowOffset:    { width: 0, height: 3 },
-    elevation:       3,
-    borderWidth:     1,
-    borderColor:     Colors.line,
-  },
-
-  errorBox: {
-    backgroundColor: Colors.danger + '12',
-    borderRadius:    10,
-    padding:         12,
-    marginBottom:    16,
-    borderLeftWidth:  3,
-    borderLeftColor: Colors.danger,
-  },
-  errorText: { fontSize: 13, color: Colors.danger, lineHeight: 19 },
-
-  forgotBtn:  { alignSelf: 'flex-end', marginBottom: 20, marginTop: -4 },
-  forgotText: { fontSize: 13, color: Colors.brand, fontWeight: '600' },
-  eyeIcon:    { fontSize: 17 },
-
-  note: {
-    marginTop:  24,
-    fontSize:   12,
-    color:      Colors.ink4,
-    textAlign:  'center',
-    lineHeight: 18,
-  },
-});
