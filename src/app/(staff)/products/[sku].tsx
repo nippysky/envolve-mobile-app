@@ -25,6 +25,7 @@ import {
 import { ScreenHeader } from '@/components/shared/ScreenHeader';
 import { color, space, radius, gutter, layout } from '@/constants/theme';
 import { formatNaira, formatDate } from '@/lib/format';
+import { useRefresh } from '@/hooks/use-refresh';
 import { useAuth } from '@/contexts/AuthContext';
 import {
   getAdminProduct, updateProduct, type ProductStatus,
@@ -119,6 +120,8 @@ export default function ConsoleProductDetailScreen() {
     }
   }, [product, busy, queryClient]);
 
+  const { refreshing, onRefresh } = useRefresh(refetch);
+
   /* ── Loading / error ── */
   if (isLoading) {
     return (
@@ -159,6 +162,7 @@ export default function ConsoleProductDetailScreen() {
   const unpriced = product.selling_price <= 0;
   const heroSize = width - gutter * 2;
 
+
   return (
     <View style={{ flex: 1, backgroundColor: color.bg }}>
       <SafeAreaView style={{ flex: 1 }} edges={['top']}>
@@ -188,12 +192,16 @@ export default function ConsoleProductDetailScreen() {
           contentContainerStyle={{
             padding: gutter,
             gap: space.lg,
-            paddingBottom: layout.tabBarHeight + space['3xl'],
+            paddingBottom: space['3xl'],
           }}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
           refreshControl={
-            <RefreshControl refreshing={isRefetching} onRefresh={() => void refetch()} tintColor={color.brand} />
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              tintColor={color.brand}
+            />
           }
         >
           {/* ── Image ── */}

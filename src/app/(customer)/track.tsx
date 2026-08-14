@@ -75,7 +75,7 @@ export default function TrackScreen() {
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         >
           <ScrollView
-            contentContainerStyle={{ padding: gutter, gap: space.lg, paddingBottom: layout.tabBarHeight + space['2xl'] }}
+            contentContainerStyle={{ padding: gutter, gap: space.lg, paddingBottom: space['2xl'] }}
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator={false}
           >

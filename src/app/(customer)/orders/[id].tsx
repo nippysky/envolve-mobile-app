@@ -16,7 +16,7 @@
  */
 
 import React, { useCallback, useMemo } from 'react';
-import { View, ScrollView, RefreshControl, Linking, Share } from 'react-native';
+import { View, ScrollView, RefreshControl, Share } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Image } from 'expo-image';
@@ -30,7 +30,9 @@ import {
 import { ScreenHeader } from '@/components/shared/ScreenHeader';
 import { OrderTimeline } from '@/components/orders/OrderTimeline';
 import { color, space, radius, gutter, layout } from '@/constants/theme';
+import { callNumber } from '@/lib/contact';
 import { formatNaira, formatDate } from '@/lib/format';
+import { useRefresh } from '@/hooks/use-refresh';
 import { getOrder } from '@/lib/services/orders.service';
 import { toast } from '@/lib/toast';
 
@@ -57,7 +59,7 @@ export default function OrderDetailScreen() {
   }, []);
 
   const callDriver = useCallback((phone: string) => {
-    void Linking.openURL(`tel:${phone.replace(/\s/g, '')}`);
+    void callNumber(phone);
   }, []);
 
   const shareOrder = useCallback(async () => {
@@ -73,6 +75,8 @@ export default function OrderDetailScreen() {
     () => order?.items.reduce((s, i) => s + i.quantity, 0) ?? 0,
     [order],
   );
+
+  const { refreshing, onRefresh } = useRefresh(refetch);
 
   /* ── Loading ── */
   if (isLoading) {
@@ -116,6 +120,7 @@ export default function OrderDetailScreen() {
   const address = [order.delivery_address, order.delivery_city, order.delivery_state]
     .filter(Boolean).join(', ');
 
+
   return (
     <View style={{ flex: 1, backgroundColor: color.bg }}>
       <SafeAreaView style={{ flex: 1 }} edges={['top']}>
@@ -139,12 +144,12 @@ export default function OrderDetailScreen() {
         />
 
         <ScrollView
-          contentContainerStyle={{ padding: gutter, gap: space.lg, paddingBottom: layout.tabBarHeight + space['2xl'] }}
+          contentContainerStyle={{ padding: gutter, gap: space.lg, paddingBottom: space['2xl'] }}
           showsVerticalScrollIndicator={false}
           refreshControl={
             <RefreshControl
-              refreshing={isRefetching}
-              onRefresh={() => void refetch()}
+              refreshing={refreshing}
+              onRefresh={onRefresh}
               tintColor={color.brand}
             />
           }

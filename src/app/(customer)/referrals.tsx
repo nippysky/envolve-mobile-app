@@ -33,6 +33,7 @@ import { ScreenHeader } from '@/components/shared/ScreenHeader';
 import { color, space, radius, gutter, layout } from '@/constants/theme';
 import { API_BASE } from '@/constants/api';
 import { formatNaira, formatDate } from '@/lib/format';
+import { useRefresh } from '@/hooks/use-refresh';
 import { getMyAccount, type CustomerStatus } from '@/lib/services/account.service';
 
 /** Short labels — the raw enum values are too long for a list row. */
@@ -73,6 +74,9 @@ export default function ReferralsScreen() {
     });
   }, [code]);
 
+
+  const { refreshing, onRefresh } = useRefresh(refetch);
+
   return (
     <View style={{ flex: 1, backgroundColor: color.bg }}>
       <SafeAreaView style={{ flex: 1 }} edges={['top']}>
@@ -82,13 +86,13 @@ export default function ReferralsScreen() {
           contentContainerStyle={{
             padding: gutter,
             gap: space.lg,
-            paddingBottom: layout.tabBarHeight + space['2xl'],
+            paddingBottom: space['2xl'],
           }}
           showsVerticalScrollIndicator={false}
           refreshControl={
             <RefreshControl
-              refreshing={isRefetching}
-              onRefresh={() => void refetch()}
+              refreshing={refreshing}
+              onRefresh={onRefresh}
               tintColor={color.brand}
             />
           }

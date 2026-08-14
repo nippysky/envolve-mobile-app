@@ -27,6 +27,7 @@ import {
 import { ProductCard } from '@/components/catalog/ProductCard';
 import { color, space, radius, gutter, layout, elevation } from '@/constants/theme';
 import { formatNaira } from '@/lib/format';
+import { useRefresh } from '@/hooks/use-refresh';
 import { useAuth } from '@/contexts/AuthContext';
 import { useBasket } from '@/hooks/use-basket';
 import { useDebounced } from '@/hooks/use-debounced';
@@ -107,6 +108,9 @@ export default function CustomerCatalogScreen() {
 
   const cardWidth = (width - gutter * 2 - space.md) / 2;
   const firstName = user?.first_name ?? 'there';
+
+
+  const { refreshing, onRefresh } = useRefresh(productsQ.refetch, unreadQ.refetch);
 
   return (
     <View style={{ flex: 1, backgroundColor: color.bg }}>
@@ -205,11 +209,8 @@ export default function CustomerCatalogScreen() {
           onEndReachedThreshold={0.6}
           refreshControl={
             <RefreshControl
-              refreshing={productsQ.isRefetching && !productsQ.isFetchingNextPage}
-              onRefresh={() => {
-                void productsQ.refetch();
-                void unreadQ.refetch();
-              }}
+              refreshing={refreshing}
+              onRefresh={onRefresh}
               tintColor={color.brand}
             />
           }

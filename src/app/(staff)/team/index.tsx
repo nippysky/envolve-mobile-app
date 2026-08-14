@@ -12,7 +12,7 @@
  */
 
 import React, { useCallback, useMemo, useState } from 'react';
-import { View, RefreshControl, Linking } from 'react-native';
+import { View, RefreshControl } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { useQuery } from '@tanstack/react-query';
@@ -25,7 +25,9 @@ import {
 } from '@/components/ui';
 import { ScreenHeader } from '@/components/shared/ScreenHeader';
 import { color, space, radius, gutter, layout } from '@/constants/theme';
+import { callNumber } from '@/lib/contact';
 import { formatDate } from '@/lib/format';
+import { useRefresh } from '@/hooks/use-refresh';
 import { useDebounced } from '@/hooks/use-debounced';
 import {
   listStaff, resendStaffInvite, type StaffMember, type StaffRole,
@@ -81,6 +83,9 @@ export default function TeamScreen() {
       setBusyId(null);
     }
   }, []);
+
+
+  const { refreshing, onRefresh } = useRefresh(teamQ.refetch);
 
   return (
     <View style={{ flex: 1, backgroundColor: color.bg }}>
@@ -157,14 +162,14 @@ export default function TeamScreen() {
           scrollEventThrottle={16}
           contentContainerStyle={{
             paddingHorizontal: gutter,
-            paddingBottom: layout.tabBarHeight + space.xl,
+            paddingBottom: space.xl,
             gap: space.sm,
           }}
           showsVerticalScrollIndicator={false}
           refreshControl={
             <RefreshControl
-              refreshing={teamQ.isRefetching}
-              onRefresh={() => void teamQ.refetch()}
+              refreshing={refreshing}
+              onRefresh={onRefresh}
               tintColor={color.brand}
             />
           }
@@ -245,7 +250,7 @@ function MemberRow({ member, index, busy, onResend }: {
 
             {member.phone ? (
               <Pressable
-                onPress={() => void Linking.openURL(`tel:${member.phone!.replace(/\s/g, '')}`)}
+                onPress={() => void callNumber(member.phone)}
                 haptic="light"
                 pressScale={0.92}
                 hitSlop={8}

@@ -29,6 +29,7 @@ import { StatTile } from '@/components/admin/StatTile';
 import { Sparkline } from '@/components/admin/Sparkline';
 import { color, space, radius, gutter, layout } from '@/constants/theme';
 import { formatNaira } from '@/lib/format';
+import { useRefresh } from '@/hooks/use-refresh';
 import { useAuth } from '@/contexts/AuthContext';
 import { getReportSummary, listStaff } from '@/lib/services/admin.service';
 
@@ -71,6 +72,9 @@ export default function ReportsScreen() {
     [s],
   );
 
+
+  const { refreshing, onRefresh } = useRefresh(summaryQ.refetch);
+
   return (
     <View style={{ flex: 1, backgroundColor: color.bg }}>
       <SafeAreaView style={{ flex: 1 }} edges={['top']}>
@@ -85,13 +89,13 @@ export default function ReportsScreen() {
           contentContainerStyle={{
             padding: gutter,
             gap: space.lg,
-            paddingBottom: layout.tabBarHeight + space['2xl'],
+            paddingBottom: space['2xl'],
           }}
           showsVerticalScrollIndicator={false}
           refreshControl={
             <RefreshControl
-              refreshing={summaryQ.isRefetching}
-              onRefresh={() => void summaryQ.refetch()}
+              refreshing={refreshing}
+              onRefresh={onRefresh}
               tintColor={color.brand}
             />
           }

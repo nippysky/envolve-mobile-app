@@ -18,7 +18,7 @@
  */
 
 import React, { useCallback, useMemo, useState } from 'react';
-import { View, ScrollView, RefreshControl, Linking, Alert } from 'react-native';
+import { View, ScrollView, RefreshControl, Alert } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Image } from 'expo-image';
@@ -31,7 +31,9 @@ import {
 import { ScreenHeader } from '@/components/shared/ScreenHeader';
 import { OrderTimeline } from '@/components/orders/OrderTimeline';
 import { color, space, radius, gutter, layout } from '@/constants/theme';
+import { callNumber } from '@/lib/contact';
 import { formatNaira, formatDate } from '@/lib/format';
+import { useRefresh } from '@/hooks/use-refresh';
 import { useAuth } from '@/contexts/AuthContext';
 import { getOrder } from '@/lib/services/orders.service';
 import {
@@ -146,6 +148,8 @@ export default function ConsoleOrderDetailScreen() {
     [order],
   );
 
+  const { refreshing, onRefresh } = useRefresh(refetch);
+
   /* ── Loading / error ── */
   if (isLoading) {
     return (
@@ -196,6 +200,7 @@ export default function ConsoleOrderDetailScreen() {
     && order.payment_status !== 'PAID'
     && order.status !== 'CANCELLED';
 
+
   return (
     <View style={{ flex: 1, backgroundColor: color.bg }}>
       <SafeAreaView style={{ flex: 1 }} edges={['top']}>
@@ -210,12 +215,16 @@ export default function ConsoleOrderDetailScreen() {
           contentContainerStyle={{
             padding: gutter,
             gap: space.lg,
-            paddingBottom: layout.tabBarHeight + space['3xl'],
+            paddingBottom: space['3xl'],
           }}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
           refreshControl={
-            <RefreshControl refreshing={isRefetching} onRefresh={() => void refetch()} tintColor={color.brand} />
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              tintColor={color.brand}
+            />
           }
         >
           {/* ── Status ── */}
@@ -423,7 +432,7 @@ export default function ConsoleOrderDetailScreen() {
                   <Button
                     variant="secondary"
                     size="sm"
-                    onPress={() => void Linking.openURL(`tel:${order.customer.phone!.replace(/\s/g, '')}`)}
+                    onPress={() => void callNumber(order.customer.phone)}
                     icon={<Icon name="phone" size={14} color={color.text} />}
                   >
                     {order.customer.phone}
@@ -481,7 +490,7 @@ export default function ConsoleOrderDetailScreen() {
                         <Button
                           size="sm"
                           variant="tinted"
-                          onPress={() => void Linking.openURL(`tel:${order.delivery!.driver!.phone!.replace(/\s/g, '')}`)}
+                          onPress={() => void callNumber(order.delivery?.driver?.phone)}
                           icon={<Icon name="phone" size={14} color={color.brand} />}
                         >
                           Call

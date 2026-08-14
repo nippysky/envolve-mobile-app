@@ -30,6 +30,7 @@ import { StatTile } from '@/components/admin/StatTile';
 import { Sparkline } from '@/components/admin/Sparkline';
 import { color, space, radius, gutter, layout } from '@/constants/theme';
 import { formatNaira } from '@/lib/format';
+import { useRefresh } from '@/hooks/use-refresh';
 import { useAuth } from '@/contexts/AuthContext';
 import { getReportSummary, listCustomers, AWAITING_REVIEW } from '@/lib/services/admin.service';
 import { getUnreadCount } from '@/lib/services/account.service';
@@ -83,6 +84,9 @@ export default function OverviewScreen() {
       .filter(o => o.status !== 'DELIVERED' && o.status !== 'CANCELLED')
       .reduce((sum, o) => sum + o.count, 0);
   }, [s]);
+
+
+  const { refreshing, onRefresh } = useRefresh(summaryQ.refetch, pendingQ.refetch, unreadQ.refetch);
 
   return (
     <View style={{ flex: 1, backgroundColor: color.bg }}>
@@ -141,12 +145,8 @@ export default function OverviewScreen() {
           showsVerticalScrollIndicator={false}
           refreshControl={
             <RefreshControl
-              refreshing={summaryQ.isRefetching}
-              onRefresh={() => {
-                void summaryQ.refetch();
-                void pendingQ.refetch();
-                void unreadQ.refetch();
-              }}
+              refreshing={refreshing}
+              onRefresh={onRefresh}
               tintColor={color.brand}
             />
           }

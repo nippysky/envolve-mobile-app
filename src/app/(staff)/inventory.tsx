@@ -28,6 +28,7 @@ import { ScreenHeader } from '@/components/shared/ScreenHeader';
 import { StatTile } from '@/components/admin/StatTile';
 import { color, space, radius, gutter, layout } from '@/constants/theme';
 import { formatNaira, formatDate } from '@/lib/format';
+import { useRefresh } from '@/hooks/use-refresh';
 import { useDebounced } from '@/hooks/use-debounced';
 import {
   listInventory, getInventoryStats, adjustStock, type InventoryBatch,
@@ -120,6 +121,9 @@ export default function InventoryScreen() {
 
   const stats = statsQ.data;
 
+
+  const { refreshing, onRefresh } = useRefresh(inventoryQ.refetch, statsQ.refetch);
+
   return (
     <View style={{ flex: 1, backgroundColor: color.bg }}>
       <SafeAreaView style={{ flex: 1 }} edges={['top']}>
@@ -187,7 +191,7 @@ export default function InventoryScreen() {
           scrollEventThrottle={16}
           contentContainerStyle={{
             paddingHorizontal: gutter,
-            paddingBottom: layout.tabBarHeight + space.xl,
+            paddingBottom: space.xl,
             gap: space.md,
           }}
           keyboardShouldPersistTaps="handled"
@@ -200,8 +204,8 @@ export default function InventoryScreen() {
           onEndReachedThreshold={0.5}
           refreshControl={
             <RefreshControl
-              refreshing={inventoryQ.isRefetching && !inventoryQ.isFetchingNextPage}
-              onRefresh={() => { void inventoryQ.refetch(); void statsQ.refetch(); }}
+              refreshing={refreshing}
+              onRefresh={onRefresh}
               tintColor={color.brand}
             />
           }

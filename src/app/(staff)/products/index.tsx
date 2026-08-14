@@ -28,6 +28,7 @@ import {
 import { ScreenHeader } from '@/components/shared/ScreenHeader';
 import { color, space, radius, gutter, layout } from '@/constants/theme';
 import { formatNaira } from '@/lib/format';
+import { useRefresh } from '@/hooks/use-refresh';
 import { useAuth } from '@/contexts/AuthContext';
 import { useDebounced } from '@/hooks/use-debounced';
 import {
@@ -92,6 +93,9 @@ export default function ConsoleProductsScreen() {
   const open = useCallback((sku: string) => {
     router.push(`/(staff)/products/${encodeURIComponent(sku)}` as never);
   }, [router]);
+
+
+  const { refreshing, onRefresh } = useRefresh(productsQ.refetch);
 
   return (
     <View style={{ flex: 1, backgroundColor: color.bg }}>
@@ -187,7 +191,7 @@ export default function ConsoleProductsScreen() {
           scrollEventThrottle={16}
           contentContainerStyle={{
             paddingHorizontal: gutter,
-            paddingBottom: layout.tabBarHeight + space.xl,
+            paddingBottom: space.xl,
             gap: space.sm,
           }}
           showsVerticalScrollIndicator={false}
@@ -199,8 +203,8 @@ export default function ConsoleProductsScreen() {
           onEndReachedThreshold={0.5}
           refreshControl={
             <RefreshControl
-              refreshing={productsQ.isRefetching && !productsQ.isFetchingNextPage}
-              onRefresh={() => void productsQ.refetch()}
+              refreshing={refreshing}
+              onRefresh={onRefresh}
               tintColor={color.brand}
             />
           }

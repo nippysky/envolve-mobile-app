@@ -15,7 +15,7 @@
  */
 
 import React, { useCallback, useMemo } from 'react';
-import { View, RefreshControl, Linking } from 'react-native';
+import { View, RefreshControl } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { useInfiniteQuery } from '@tanstack/react-query';
@@ -28,7 +28,9 @@ import {
 } from '@/components/ui';
 import { ScreenHeader } from '@/components/shared/ScreenHeader';
 import { color, space, radius, gutter, layout } from '@/constants/theme';
+import { callNumber } from '@/lib/contact';
 import { formatNaira } from '@/lib/format';
+import { useRefresh } from '@/hooks/use-refresh';
 import { openDirections } from '@/lib/directions';
 import { useAuth } from '@/contexts/AuthContext';
 import {
@@ -73,6 +75,9 @@ export default function DriverTodayScreen() {
     router.push(`/(driver)/deliveries/${id}` as never);
   }, [router]);
 
+
+  const { refreshing, onRefresh } = useRefresh(deliveriesQ.refetch);
+
   return (
     <View style={{ flex: 1, backgroundColor: color.bg }}>
       <SafeAreaView style={{ flex: 1 }} edges={['top']}>
@@ -108,8 +113,8 @@ export default function DriverTodayScreen() {
           onEndReachedThreshold={0.5}
           refreshControl={
             <RefreshControl
-              refreshing={deliveriesQ.isRefetching && !deliveriesQ.isFetchingNextPage}
-              onRefresh={() => void deliveriesQ.refetch()}
+              refreshing={refreshing}
+              onRefresh={onRefresh}
               tintColor={color.brand}
             />
           }
@@ -215,7 +220,7 @@ function RunCard({ delivery, index, onPress }: {
               <Action
                 icon="phone"
                 label="Call"
-                onPress={() => void Linking.openURL(`tel:${customer.phone!.replace(/\s/g, '')}`)}
+                onPress={() => void callNumber(customer.phone)}
               />
             ) : null}
             {address ? (

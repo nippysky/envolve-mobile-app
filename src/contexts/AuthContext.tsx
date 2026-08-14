@@ -13,8 +13,10 @@ import React, {
   useEffect,
   useState,
 } from 'react';
+import { AppState, type AppStateStatus } from 'react-native';
 import { router }                    from 'expo-router';
 import { TokenStorage }              from '@/lib/storage';
+import { setSessionExpiredHandler, refreshSession } from '@/lib/api-client';
 // api-client used by screens; not needed directly in AuthContext (logout uses raw fetch)
 import { API_BASE, MOBILE_HEADERS }  from '@/constants/api';
 
@@ -59,6 +61,52 @@ export function useAuth(): AuthContextValue {
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser]         = useState<AppUser | null>(null);
   const [isLoading, setLoading] = useState(true);
+
+  /**
+   * Drop the session locally and return to sign-in.
+   *
+   * Separate from `logout` because there's nothing to revoke — the refresh
+   * token is already dead, so calling the logout endpoint would just fail.
+   */
+  const endSession = useCallback(async () => {
+    await TokenStorage.clear();
+    setUser(null);
+    router.replace('/(auth)/sign-in' as never);
+  }, []);
+
+  /**
+   * Let the API client end the session when a refresh fails.
+   *
+   * Without this the client cleared SecureStore but `user` stayed in state, so
+   * the app kept rendering the signed-in stack with no credentials — every
+   * screen erroring and no way out but force-quitting.
+   */
+  useEffect(() => {
+    setSessionExpiredHandler(() => { void endSession(); });
+    return () => setSessionExpiredHandler(null);
+  }, [endSession]);
+
+  /**
+   * Refresh when the app returns to the foreground.
+   *
+   * Access tokens last 15 minutes and a phone spends most of its life
+   * backgrounded, so without this the first action after every resume pays for
+   * a wasted 401 before the reactive refresh kicks in. This mirrors what the
+   * web does on `visibilitychange`.
+   *
+   * Gated on there being a user: an unauthenticated app has nothing to refresh,
+   * and firing this on the sign-in screen would be noise.
+   */
+  useEffect(() => {
+    if (!user) return;
+
+    const onChange = (state: AppStateStatus) => {
+      if (state === 'active') void refreshSession();
+    };
+
+    const sub = AppState.addEventListener('change', onChange);
+    return () => sub.remove();
+  }, [user]);
 
   // ── Restore session on mount ─────────────────────────────────────────────
   useEffect(() => {

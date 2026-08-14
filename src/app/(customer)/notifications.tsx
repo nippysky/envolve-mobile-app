@@ -16,7 +16,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Pressable, Icon } from '@/components/ui';
 import { ScreenHeader } from '@/components/shared/ScreenHeader';
 import { NotificationsList, useMarkAllRead } from '@/components/shared/NotificationsList';
-import { color, layout } from '@/constants/theme';
+import { color } from '@/constants/theme';
 import { getUnreadCount } from '@/lib/services/account.service';
 
 /** Web paths → customer routes. Unrecognised links simply don't navigate. */
@@ -76,7 +76,6 @@ export default function CustomerNotificationsScreen() {
         <NotificationsList
           resolveRoute={resolveRoute}
           onNavigate={navigate}
-          bottomInset={layout.tabBarHeight}
         />
       </SafeAreaView>
     </View>

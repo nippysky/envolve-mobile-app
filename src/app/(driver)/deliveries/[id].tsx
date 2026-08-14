@@ -22,7 +22,7 @@
  */
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { View, ScrollView, RefreshControl, Linking, Alert } from 'react-native';
+import { View, ScrollView, RefreshControl, Alert } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query';
@@ -35,7 +35,9 @@ import {
 import { ScreenHeader } from '@/components/shared/ScreenHeader';
 import { OrderTimeline } from '@/components/orders/OrderTimeline';
 import { color, space, radius, gutter, layout } from '@/constants/theme';
+import { callNumber } from '@/lib/contact';
 import { formatNaira, formatDate } from '@/lib/format';
+import { useRefresh } from '@/hooks/use-refresh';
 import {
   listMyDeliveries, updateMyDelivery, DRIVER_NEXT, SETTLED,
   type DeliveryStatus,
@@ -161,6 +163,8 @@ export default function DriverRunScreen() {
     );
   }, [delivery, move]);
 
+  const { refreshing, onRefresh } = useRefresh(deliveriesQ.refetch);
+
   /* ── Loading ── */
   if (deliveriesQ.isLoading || searching) {
     return (
@@ -214,6 +218,7 @@ export default function DriverRunScreen() {
   const canFail    = nextStates.includes('FAILED');
   const settled    = SETTLED.includes(delivery.status);
 
+
   return (
     <View style={{ flex: 1, backgroundColor: color.bg }}>
       <SafeAreaView style={{ flex: 1 }} edges={['top']}>
@@ -228,14 +233,14 @@ export default function DriverRunScreen() {
           contentContainerStyle={{
             padding: gutter,
             gap: space.lg,
-            paddingBottom: settled ? layout.tabBarHeight + space.xl : 220,
+            paddingBottom: settled ? space.xl : 220,
           }}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
           refreshControl={
             <RefreshControl
-              refreshing={deliveriesQ.isRefetching}
-              onRefresh={() => void deliveriesQ.refetch()}
+              refreshing={refreshing}
+              onRefresh={onRefresh}
               tintColor={color.brand}
             />
           }
@@ -286,7 +291,7 @@ export default function DriverRunScreen() {
                     <Button
                       variant="secondary"
                       style={{ flex: 1 }}
-                      onPress={() => void Linking.openURL(`tel:${customer.phone!.replace(/\s/g, '')}`)}
+                      onPress={() => void callNumber(customer.phone)}
                       icon={<Icon name="phone" size={15} color={color.text} />}
                     >
                       Call

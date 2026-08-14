@@ -18,7 +18,7 @@
  */
 
 import React, { useCallback, useMemo, useState } from 'react';
-import { View, RefreshControl, Linking, Alert } from 'react-native';
+import { View, RefreshControl, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -32,7 +32,9 @@ import {
 } from '@/components/ui';
 import { ScreenHeader } from '@/components/shared/ScreenHeader';
 import { color, space, radius, gutter, layout } from '@/constants/theme';
+import { callNumber } from '@/lib/contact';
 import { formatNaira, formatDate } from '@/lib/format';
+import { useRefresh } from '@/hooks/use-refresh';
 import { useDebounced } from '@/hooks/use-debounced';
 import {
   listDeliveries, updateDelivery, listStaff,
@@ -183,6 +185,9 @@ export default function DeliveriesScreen() {
     );
   }, [move]);
 
+
+  const { refreshing, onRefresh } = useRefresh(deliveriesQ.refetch);
+
   return (
     <View style={{ flex: 1, backgroundColor: color.bg }}>
       <SafeAreaView style={{ flex: 1 }} edges={['top']}>
@@ -248,7 +253,7 @@ export default function DeliveriesScreen() {
           scrollEventThrottle={16}
           contentContainerStyle={{
             paddingHorizontal: gutter,
-            paddingBottom: layout.tabBarHeight + space.xl,
+            paddingBottom: space.xl,
             gap: space.md,
           }}
           showsVerticalScrollIndicator={false}
@@ -260,8 +265,8 @@ export default function DeliveriesScreen() {
           onEndReachedThreshold={0.5}
           refreshControl={
             <RefreshControl
-              refreshing={deliveriesQ.isRefetching && !deliveriesQ.isFetchingNextPage}
-              onRefresh={() => void deliveriesQ.refetch()}
+              refreshing={refreshing}
+              onRefresh={onRefresh}
               tintColor={color.brand}
             />
           }
@@ -423,7 +428,7 @@ function DeliveryCard({
 
             {delivery.driver?.phone ? (
               <Pressable
-                onPress={() => void Linking.openURL(`tel:${delivery.driver!.phone!.replace(/\s/g, '')}`)}
+                onPress={() => void callNumber(delivery.driver?.phone)}
                 haptic="light"
                 pressScale={0.92}
                 hitSlop={8}

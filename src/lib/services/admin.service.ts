@@ -218,8 +218,27 @@ export function listCustomers(opts: {
   })}`);
 }
 
+/**
+ * Single customer.
+ *
+ * Two things differ from the list endpoint and have caught us out already:
+ *
+ *   1. The detail route returns the customer **directly** as `data`, not
+ *      wrapped in `{ customer }` the way most single-entity routes here do.
+ *   2. `reviewed_by` is an **object** here but a plain string in the list.
+ *
+ * Hence a separate type rather than reusing `AdminCustomer`. Typing this as
+ * `{ customer: … }` silently yields `undefined` and renders an error screen on
+ * a customer that loads fine on the web — which is exactly what happened.
+ */
+export interface AdminCustomerDetail extends Omit<AdminCustomer, 'reviewed_by'> {
+  reviewed_by: { id: number; name: string; email: string } | null;
+  /** Only the detail route returns this. */
+  order_count: number;
+}
+
 export function getCustomer(id: number) {
-  return apiFetch<{ customer: AdminCustomer }>(`/api/customers/${id}`);
+  return apiFetch<AdminCustomerDetail>(`/api/customers/${id}`);
 }
 
 /** Approve or reject a pending pharmacy account. */
@@ -246,10 +265,74 @@ export function assignStaff(customerId: number, staffUserId: number | null) {
   });
 }
 
-/** Signed, time-limited URL for the uploaded PCN certificate. */
-export function getPcnUrl(customerId: number) {
-  return apiFetch<{ url: string }>(`/api/customers/${customerId}/pcn-url`);
+export interface PcnCertificate {
+  /** The original file, exactly as stored. Empty string when unavailable. */
+  url:         string;
+  /**
+   * A server-signed JPEG of page one, safe to render as an image even for
+   * PDFs. Falls back to `url` when the API is older and doesn't send it.
+   */
+  preview_url: string;
+  is_pdf:      boolean;
 }
+
+/** Cloudinary serves PDFs under `/raw/` or with a `.pdf` suffix, depending on
+ *  how the upload was detected. Both mean "don't try to render this as an
+ *  image". */
+function looksLikePdf(url: string): boolean {
+  const u = url.toLowerCase();
+  return u.includes('.pdf') || u.includes('/raw/');
+}
+
+/**
+ * Deliverable URL for a customer's PCN certificate.
+ *
+ * ## Why there are two URLs
+ *
+ * Cloudinary **blocks PDF delivery by default**, so the original URL 401s for
+ * PDF certificates — which a browser draws as a broken-image icon. The server
+ * therefore also returns `preview_url`: a signed transformation that rasterises
+ * page one to JPEG. Image delivery isn't restricted, so the preview renders
+ * whatever the original is.
+ *
+ * **Never rewrite either URL.** Both are signed and the signature covers the
+ * transformation string, so appending anything client-side invalidates them.
+ * That's precisely why the preview is built server-side.
+ *
+ * ## Three response shapes
+ *
+ * Current: `{ url, preview_url, is_pdf }`. Before that: `{ url, is_pdf }`.
+ * Before that: a bare `{ signedUrl }` with no `data` wrapper — a
+ * token-authenticated URL that 401'd, because token auth isn't enabled here.
+ *
+ * This reads whichever it gets. That isn't defensive padding: a mobile build
+ * outlives any single API deploy, so a client that only understands the newest
+ * shape breaks for every user until they update.
+ *
+ * `url` is normalised to `''` rather than `undefined` when neither is present,
+ * so callers can test truthiness instead of guessing — passing `undefined` to
+ * an image source renders a broken frame, and passing it to the browser throws.
+ *
+ * Calling this is what writes the "who viewed this licence" audit entry, so
+ * never bypass it by using `pcn_certificate_url` from the customer record.
+ */
+export async function getPcnUrl(customerId: number): Promise<PcnCertificate> {
+  const res = await apiFetch<{
+    url?: string; preview_url?: string; is_pdf?: boolean; signedUrl?: string;
+  }>(`/api/customers/${customerId}/pcn-url`);
+
+  const url = (res.url ?? res.signedUrl ?? '').trim();
+
+  return {
+    url,
+    // An older API sends no preview. Falling back to the original keeps the
+    // screen working — it just can't render a PDF inline.
+    preview_url: (res.preview_url ?? '').trim() || url,
+    // Trust the server when it tells us, derive it when it doesn't.
+    is_pdf: res.is_pdf ?? (url ? looksLikePdf(url) : false),
+  };
+}
+
 
 /* ══ Products ══════════════════════════════════════════════════════════════ */
 

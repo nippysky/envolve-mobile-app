@@ -11,7 +11,7 @@
  */
 
 import React from 'react';
-import { View, ScrollView, Alert, Linking } from 'react-native';
+import { View, ScrollView, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { useQuery } from '@tanstack/react-query';
@@ -22,6 +22,7 @@ import {
 } from '@/components/ui';
 import { ScreenHeader } from '@/components/shared/ScreenHeader';
 import { color, space, radius, gutter, layout } from '@/constants/theme';
+import { callNumber } from '@/lib/contact';
 import { useAuth } from '@/contexts/AuthContext';
 import { listMyDeliveries, SETTLED } from '@/lib/services/driver.service';
 import { getUnreadCount } from '@/lib/services/account.service';
@@ -154,7 +155,7 @@ export default function DriverProfileScreen() {
                 icon="phone"
                 label="Call dispatch"
                 hint="+234 805 513 6726"
-                onPress={() => void Linking.openURL(`tel:${DISPATCH_PHONE}`)}
+                onPress={() => void callNumber(DISPATCH_PHONE)}
               />
               <Row
                 icon="lock"

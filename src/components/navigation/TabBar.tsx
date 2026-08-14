@@ -176,6 +176,23 @@ export function TabBar({
 }: Pick<BottomTabBarProps, 'state' | 'navigation'> & { tabs: TabConfig[] }) {
   const insets = useSafeAreaInsets();
 
+  /**
+   * Hide the bar on pushed screens.
+   *
+   * Every role layout registers its detail and form screens with `href: null`
+   * so they don't appear as tabs — but they're still routes in the same
+   * navigator, so the bar would otherwise render over them. That's wrong twice:
+   * it covers content and fixed action bars, and it offers navigation away from
+   * a half-filled form as if that were free.
+   *
+   * `tabs` is the list of real destinations, so any focused route missing from
+   * it is by definition a pushed screen. No extra configuration to keep in
+   * step — registering a screen with `href: null` is already the declaration.
+   */
+  const focusedRoute = state.routes[state.index]?.name;
+  const isPushedScreen = !tabs.some(t => t.name === focusedRoute);
+  if (isPushedScreen) return null;
+
   return (
     <View
       style={{

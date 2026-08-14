@@ -29,6 +29,7 @@ import {
 import { ScreenHeader } from '@/components/shared/ScreenHeader';
 import { color, space, radius, gutter, layout, elevation } from '@/constants/theme';
 import { formatNaira } from '@/lib/format';
+import { useRefresh } from '@/hooks/use-refresh';
 import { useBasket, type BasketItem } from '@/hooks/use-basket';
 import { toast } from '@/lib/toast';
 
@@ -88,6 +89,8 @@ export default function BasketScreen() {
     }
   }, [basket]);
 
+  const { refreshing, onRefresh } = useRefresh(basket.refresh);
+
   /* ── Empty ── */
   if (!basket.isLoading && basket.items.length === 0) {
     return (
@@ -108,6 +111,7 @@ export default function BasketScreen() {
       </View>
     );
   }
+
 
   return (
     <View style={{ flex: 1, backgroundColor: color.bg }}>
@@ -135,8 +139,8 @@ export default function BasketScreen() {
           showsVerticalScrollIndicator={false}
           refreshControl={
             <RefreshControl
-              refreshing={basket.isLoading}
-              onRefresh={() => void basket.refresh()}
+              refreshing={refreshing}
+              onRefresh={onRefresh}
               tintColor={color.brand}
             />
           }

@@ -27,6 +27,7 @@ import {
 } from '@/components/ui';
 import { ScreenHeader } from '@/components/shared/ScreenHeader';
 import { color, space, radius, gutter, layout } from '@/constants/theme';
+import { useRefresh } from '@/hooks/use-refresh';
 import { useAuth } from '@/contexts/AuthContext';
 import { getSettings, updateSettings, type AppSettings } from '@/lib/services/admin.service';
 import { toast } from '@/lib/toast';
@@ -103,6 +104,8 @@ export default function SettingsScreen() {
     }
   }, [busy, dirty, patch, queryClient]);
 
+  const { refreshing, onRefresh } = useRefresh(refetch);
+
   if (!isAdmin) {
     return (
       <View style={{ flex: 1, backgroundColor: color.bg }}>
@@ -120,6 +123,7 @@ export default function SettingsScreen() {
     );
   }
 
+
   return (
     <View style={{ flex: 1, backgroundColor: color.bg }}>
       <SafeAreaView style={{ flex: 1 }} edges={['top']}>
@@ -135,7 +139,11 @@ export default function SettingsScreen() {
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator={false}
             refreshControl={
-              <RefreshControl refreshing={isRefetching} onRefresh={() => void refetch()} tintColor={color.brand} />
+              <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              tintColor={color.brand}
+            />
             }
           >
             {isLoading ? (

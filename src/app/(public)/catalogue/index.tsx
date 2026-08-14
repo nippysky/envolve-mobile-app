@@ -26,6 +26,7 @@ import {
 import { ProductCard } from '@/components/catalog/ProductCard';
 import { Logo } from '@/components/shared/Logo';
 import { color, space, radius, gutter, layout } from '@/constants/theme';
+import { useRefresh } from '@/hooks/use-refresh';
 import { useAuth } from '@/contexts/AuthContext';
 import {
   listProducts, listCategories,
@@ -96,6 +97,9 @@ export default function PublicCatalogueScreen() {
   }, [router]);
 
   const cardWidth = (width - gutter * 2 - space.md) / 2;
+
+
+  const { refreshing, onRefresh } = useRefresh(productsQ.refetch);
 
   return (
     <View style={{ flex: 1, backgroundColor: color.bg }}>
@@ -185,8 +189,8 @@ export default function PublicCatalogueScreen() {
           onEndReachedThreshold={0.6}
           refreshControl={
             <RefreshControl
-              refreshing={productsQ.isRefetching && !productsQ.isFetchingNextPage}
-              onRefresh={() => void productsQ.refetch()}
+              refreshing={refreshing}
+              onRefresh={onRefresh}
               tintColor={color.brand}
             />
           }

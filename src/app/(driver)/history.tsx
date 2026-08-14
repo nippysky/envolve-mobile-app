@@ -26,6 +26,7 @@ import { ScreenHeader } from '@/components/shared/ScreenHeader';
 import { StatTile } from '@/components/admin/StatTile';
 import { color, space, radius, gutter, layout } from '@/constants/theme';
 import { formatNaira, formatDate } from '@/lib/format';
+import { useRefresh } from '@/hooks/use-refresh';
 import {
   listMyDeliveries, SETTLED, type DriverDelivery, type DeliveryStatus,
 } from '@/lib/services/driver.service';
@@ -78,6 +79,9 @@ export default function DriverHistoryScreen() {
       value:     delivered.reduce((s, d) => s + (d.order?.total ?? 0), 0),
     };
   }, [settled]);
+
+
+  const { refreshing, onRefresh } = useRefresh(deliveriesQ.refetch);
 
   return (
     <View style={{ flex: 1, backgroundColor: color.bg }}>
@@ -171,8 +175,8 @@ export default function DriverHistoryScreen() {
           onEndReachedThreshold={0.5}
           refreshControl={
             <RefreshControl
-              refreshing={deliveriesQ.isRefetching && !deliveriesQ.isFetchingNextPage}
-              onRefresh={() => void deliveriesQ.refetch()}
+              refreshing={refreshing}
+              onRefresh={onRefresh}
               tintColor={color.brand}
             />
           }

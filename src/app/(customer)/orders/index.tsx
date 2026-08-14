@@ -26,6 +26,7 @@ import {
 import { ScreenHeader } from '@/components/shared/ScreenHeader';
 import { color, space, radius, gutter, layout } from '@/constants/theme';
 import { formatNaira, formatDate } from '@/lib/format';
+import { useRefresh } from '@/hooks/use-refresh';
 import { listMyOrders, type OrderSummary } from '@/lib/services/orders.service';
 
 type Filter = 'all' | 'active' | 'delivered' | 'cancelled';
@@ -78,6 +79,9 @@ export default function OrdersScreen() {
   }, [router]);
 
   const hasAnyOrders = all.length > 0;
+
+
+  const { refreshing, onRefresh } = useRefresh(ordersQ.refetch);
 
   return (
     <View style={{ flex: 1, backgroundColor: color.bg }}>
@@ -155,8 +159,8 @@ export default function OrdersScreen() {
           onEndReachedThreshold={0.5}
           refreshControl={
             <RefreshControl
-              refreshing={ordersQ.isRefetching && !ordersQ.isFetchingNextPage}
-              onRefresh={() => void ordersQ.refetch()}
+              refreshing={refreshing}
+              onRefresh={onRefresh}
               tintColor={color.brand}
             />
           }

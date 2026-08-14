@@ -63,7 +63,7 @@ export default function ConsoleProfileScreen() {
           contentContainerStyle={{
             padding: gutter,
             gap: space.lg,
-            paddingBottom: layout.tabBarHeight + space['2xl'],
+            paddingBottom: space['2xl'],
           }}
           showsVerticalScrollIndicator={false}
         >

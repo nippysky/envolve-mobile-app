@@ -27,6 +27,7 @@ import {
 import { ScreenHeader } from '@/components/shared/ScreenHeader';
 import { color, space, radius, gutter, layout } from '@/constants/theme';
 import { formatNaira, formatDate } from '@/lib/format';
+import { useRefresh } from '@/hooks/use-refresh';
 import { useDebounced } from '@/hooks/use-debounced';
 import {
   listOrders, type AdminOrder, type OrderStatus, type PaymentStatus,
@@ -88,6 +89,9 @@ export default function ConsoleOrdersScreen() {
   const openOrder = useCallback((id: number) => {
     router.push(`/(staff)/orders/${id}` as never);
   }, [router]);
+
+
+  const { refreshing, onRefresh } = useRefresh(ordersQ.refetch);
 
   return (
     <View style={{ flex: 1, backgroundColor: color.bg }}>
@@ -178,8 +182,8 @@ export default function ConsoleOrdersScreen() {
           onEndReachedThreshold={0.5}
           refreshControl={
             <RefreshControl
-              refreshing={ordersQ.isRefetching && !ordersQ.isFetchingNextPage}
-              onRefresh={() => void ordersQ.refetch()}
+              refreshing={refreshing}
+              onRefresh={onRefresh}
               tintColor={color.brand}
             />
           }

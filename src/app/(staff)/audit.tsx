@@ -29,6 +29,7 @@ import {
 import { ScreenHeader } from '@/components/shared/ScreenHeader';
 import { color, space, radius, gutter, layout } from '@/constants/theme';
 import { timeAgo, formatDate } from '@/lib/format';
+import { useRefresh } from '@/hooks/use-refresh';
 import { useAuth } from '@/contexts/AuthContext';
 import { useDebounced } from '@/hooks/use-debounced';
 import { listAuditLogs, type AuditLogEntry } from '@/lib/services/admin.service';
@@ -105,6 +106,8 @@ export default function AuditScreen() {
   const total    = logsQ.data?.pages[0]?.pagination.total ?? 0;
   const filtered = !!search || !!action;
 
+  const { refreshing, onRefresh } = useRefresh(logsQ.refetch);
+
   if (!isAdmin) {
     return (
       <View style={{ flex: 1, backgroundColor: color.bg }}>
@@ -121,6 +124,7 @@ export default function AuditScreen() {
       </View>
     );
   }
+
 
   return (
     <View style={{ flex: 1, backgroundColor: color.bg }}>
@@ -187,7 +191,7 @@ export default function AuditScreen() {
           scrollEventThrottle={16}
           contentContainerStyle={{
             paddingHorizontal: gutter,
-            paddingBottom: layout.tabBarHeight + space.xl,
+            paddingBottom: space.xl,
             gap: space.sm,
           }}
           showsVerticalScrollIndicator={false}
@@ -199,8 +203,8 @@ export default function AuditScreen() {
           onEndReachedThreshold={0.5}
           refreshControl={
             <RefreshControl
-              refreshing={logsQ.isRefetching && !logsQ.isFetchingNextPage}
-              onRefresh={() => void logsQ.refetch()}
+              refreshing={refreshing}
+              onRefresh={onRefresh}
               tintColor={color.brand}
             />
           }

@@ -23,6 +23,7 @@ import {
 } from '@/components/ui';
 import { ScreenHeader } from '@/components/shared/ScreenHeader';
 import { color, space, radius, gutter, layout } from '@/constants/theme';
+import { useRefresh } from '@/hooks/use-refresh';
 import { useAuth } from '@/contexts/AuthContext';
 import {
   getInventoryStats, listDeliveries, listStaff,
@@ -87,6 +88,9 @@ export default function MoreScreen() {
     if (isAdmin) void teamQ.refetch();
   };
 
+
+  const { refreshing, onRefresh } = useRefresh(statsQ.refetch, awaitingQ.refetch, unreadQ.refetch);
+
   return (
     <View style={{ flex: 1, backgroundColor: color.bg }}>
       <SafeAreaView style={{ flex: 1 }} edges={['top']}>
@@ -101,8 +105,8 @@ export default function MoreScreen() {
           showsVerticalScrollIndicator={false}
           refreshControl={
             <RefreshControl
-              refreshing={statsQ.isRefetching}
-              onRefresh={refreshAll}
+              refreshing={refreshing}
+              onRefresh={onRefresh}
               tintColor={color.brand}
             />
           }

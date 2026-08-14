@@ -12,7 +12,7 @@
  */
 
 import React, { useCallback } from 'react';
-import { View, ScrollView, RefreshControl, Linking, Alert } from 'react-native';
+import { View, ScrollView, RefreshControl, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { useQuery } from '@tanstack/react-query';
@@ -23,7 +23,9 @@ import {
 } from '@/components/ui';
 import { ScreenHeader } from '@/components/shared/ScreenHeader';
 import { color, space, radius, gutter, layout } from '@/constants/theme';
+import { callNumber, emailAddress } from '@/lib/contact';
 import { formatNaira, formatDate } from '@/lib/format';
+import { useRefresh } from '@/hooks/use-refresh';
 import { useAuth } from '@/contexts/AuthContext';
 import { getMyAccount } from '@/lib/services/account.service';
 import type { IconName } from '@/components/ui/Icon';
@@ -68,6 +70,9 @@ export default function AccountScreen() {
 
   const approved = profile?.status === 'APPROVED';
 
+
+  const { refreshing, onRefresh } = useRefresh(refetch);
+
   return (
     <View style={{ flex: 1, backgroundColor: color.bg }}>
       <SafeAreaView style={{ flex: 1 }} edges={['top']}>
@@ -82,8 +87,8 @@ export default function AccountScreen() {
           showsVerticalScrollIndicator={false}
           refreshControl={
             <RefreshControl
-              refreshing={isRefetching}
-              onRefresh={() => void refetch()}
+              refreshing={refreshing}
+              onRefresh={onRefresh}
               tintColor={color.brand}
             />
           }
@@ -249,13 +254,13 @@ export default function AccountScreen() {
                 icon="email"
                 label="Email us"
                 hint={SUPPORT_EMAIL}
-                onPress={() => void Linking.openURL(`mailto:${SUPPORT_EMAIL}`)}
+                onPress={() => void emailAddress(SUPPORT_EMAIL)}
               />
               <MenuRow
                 icon="phone"
                 label="Call us"
                 hint="+234 805 513 6726"
-                onPress={() => void Linking.openURL(`tel:${SUPPORT_PHONE}`)}
+                onPress={() => void callNumber(SUPPORT_PHONE)}
                 last
               />
             </Surface>

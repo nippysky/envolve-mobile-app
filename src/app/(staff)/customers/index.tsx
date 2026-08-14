@@ -25,6 +25,7 @@ import {
 import { ScreenHeader } from '@/components/shared/ScreenHeader';
 import { color, space, radius, gutter, layout } from '@/constants/theme';
 import { formatDate } from '@/lib/format';
+import { useRefresh } from '@/hooks/use-refresh';
 import { useAuth } from '@/contexts/AuthContext';
 import { useDebounced } from '@/hooks/use-debounced';
 import {
@@ -123,6 +124,9 @@ export default function ConsoleCustomersScreen() {
   const open = useCallback((id: number) => {
     router.push(`/(staff)/customers/${id}` as never);
   }, [router]);
+
+
+  const { refreshing, onRefresh } = useRefresh(customersQ.refetch);
 
   return (
     <View style={{ flex: 1, backgroundColor: color.bg }}>
@@ -244,8 +248,8 @@ export default function ConsoleCustomersScreen() {
           onEndReachedThreshold={0.5}
           refreshControl={
             <RefreshControl
-              refreshing={customersQ.isRefetching && !customersQ.isFetchingNextPage}
-              onRefresh={() => void customersQ.refetch()}
+              refreshing={refreshing}
+              onRefresh={onRefresh}
               tintColor={color.brand}
             />
           }

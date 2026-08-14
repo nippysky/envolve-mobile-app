@@ -15,10 +15,9 @@
  */
 
 import React, { useCallback, useState } from 'react';
-import { View, ScrollView, RefreshControl, Linking } from 'react-native';
+import { View, ScrollView, RefreshControl } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import * as WebBrowser from 'expo-web-browser';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';
 
@@ -26,8 +25,11 @@ import {
   Text, Button, Input, Pressable, Icon, Surface, Badge, Skeleton, EmptyState,
 } from '@/components/ui';
 import { ScreenHeader } from '@/components/shared/ScreenHeader';
+import { CertificateViewer } from '@/components/admin/CertificateViewer';
 import { color, space, radius, gutter, layout } from '@/constants/theme';
+import { callNumber, emailAddress } from '@/lib/contact';
 import { formatDate } from '@/lib/format';
+import { useRefresh } from '@/hooks/use-refresh';
 import { useAuth } from '@/contexts/AuthContext';
 import {
   getCustomer, reviewCustomer, assignStaff, getPcnUrl, listStaff,
@@ -91,7 +93,7 @@ export default function ConsoleCustomerDetailScreen() {
     staleTime: 5 * 60_000,
   });
 
-  const customer = data?.customer;
+  const customer = data;
 
   const invalidate = useCallback(async () => {
     await queryClient.invalidateQueries({ queryKey: ['customers'] });
@@ -141,24 +143,18 @@ export default function ConsoleCustomerDetailScreen() {
   }, [customer, busy, invalidate]);
 
   /**
-   * The certificate is a private upload, so the API mints a short-lived signed
-   * URL rather than exposing a permanent one. Fetch it on demand, then open it
-   * in a browser sheet — it may be a PDF, which no image viewer will render.
+   * The certificate URL is fetched on demand rather than read from the customer
+   * record, because hitting the endpoint is what writes the "who viewed this
+   * licence" audit entry. `enabled` gates it on there being one to fetch.
    */
-  const openCertificate = useCallback(async () => {
-    if (!customer || busy) return;
-    setBusy(true);
-    try {
-      const { url } = await getPcnUrl(customer.id);
-      await WebBrowser.openBrowserAsync(url, {
-        presentationStyle: WebBrowser.WebBrowserPresentationStyle.PAGE_SHEET,
-      });
-    } catch (err) {
-      toast.error((err as Error).message, 'Could not open certificate');
-    } finally {
-      setBusy(false);
-    }
-  }, [customer, busy]);
+  const certQ = useQuery({
+    queryKey: ['customers', 'pcn', customerId],
+    queryFn:  () => getPcnUrl(customerId),
+    enabled:  Number.isFinite(customerId) && !!customer?.pcn_certificate_url,
+    staleTime: 5 * 60_000,
+  });
+
+  const { refreshing, onRefresh } = useRefresh(refetch, certQ.refetch);
 
   /* ── Loading / error ── */
   if (isLoading) {
@@ -204,6 +200,7 @@ export default function ConsoleCustomerDetailScreen() {
 
   const needsReview = REVIEWABLE.includes(customer.status);
 
+
   return (
     <View style={{ flex: 1, backgroundColor: color.bg }}>
       <SafeAreaView style={{ flex: 1 }} edges={['top']}>
@@ -213,12 +210,16 @@ export default function ConsoleCustomerDetailScreen() {
           contentContainerStyle={{
             padding: gutter,
             gap: space.lg,
-            paddingBottom: layout.tabBarHeight + space['3xl'],
+            paddingBottom: space['3xl'],
           }}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
           refreshControl={
-            <RefreshControl refreshing={isRefetching} onRefresh={() => void refetch()} tintColor={color.brand} />
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              tintColor={color.brand}
+            />
           }
         >
           {/* ── Identity ── */}
@@ -256,7 +257,7 @@ export default function ConsoleCustomerDetailScreen() {
                     size="sm"
                     variant="secondary"
                     style={{ flex: 1 }}
-                    onPress={() => void Linking.openURL(`mailto:${customer.user.email}`)}
+                    onPress={() => void emailAddress(customer.user.email)}
                     icon={<Icon name="email" size={14} color={color.text} />}
                   >
                     Email
@@ -266,7 +267,7 @@ export default function ConsoleCustomerDetailScreen() {
                       size="sm"
                       variant="secondary"
                       style={{ flex: 1 }}
-                      onPress={() => void Linking.openURL(`tel:${customer.user.phone!.replace(/\s/g, '')}`)}
+                      onPress={() => void callNumber(customer.user.phone)}
                       icon={<Icon name="phone" size={14} color={color.text} />}
                     >
                       Call
@@ -292,15 +293,22 @@ export default function ConsoleCustomerDetailScreen() {
                   </View>
 
                   {customer.pcn_certificate_url ? (
-                    <Button
-                      variant="secondary"
-                      fullWidth
-                      onPress={openCertificate}
-                      disabled={busy}
-                      icon={<Icon name="document" size={16} color={color.text} />}
-                    >
-                      View PCN certificate
-                    </Button>
+                    certQ.data ? (
+                      <CertificateViewer
+                        url={certQ.data.url}
+                        previewUrl={certQ.data.preview_url}
+                        isPdf={certQ.data.is_pdf}
+                        label={name}
+                      />
+                    ) : certQ.isError ? (
+                      <Surface level="none" tone="danger" padded="md" rounded="md">
+                        <Text variant="caption" style={{ color: '#991b1b' }}>
+                          Couldn’t load the certificate. Pull to refresh and try again.
+                        </Text>
+                      </Surface>
+                    ) : (
+                      <Skeleton width="100%" height={220} radius="lg" />
+                    )
                   ) : (
                     <Surface level="none" tone="danger" padded="md" rounded="md">
                       <Text variant="caption" style={{ color: '#991b1b' }}>
@@ -374,7 +382,7 @@ export default function ConsoleCustomerDetailScreen() {
                   <Row
                     icon="shield"
                     label="Decision"
-                    value={`${STATUS_LABEL[customer.status] ?? customer.status.toLowerCase()}${customer.reviewed_by ? ` by ${customer.reviewed_by}` : ''}`}
+                    value={`${STATUS_LABEL[customer.status] ?? customer.status.toLowerCase()}${customer.reviewed_by ? ` by ${customer.reviewed_by.name}` : ''}`}
                   />
                   {customer.reviewed_at ? (
                     <Row icon="calendar" label="Reviewed" value={formatDate(customer.reviewed_at)} />
@@ -383,15 +391,16 @@ export default function ConsoleCustomerDetailScreen() {
                     <Row icon="document" label="Note" value={customer.review_note} />
                   ) : null}
                   {customer.pcn_certificate_url ? (
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      onPress={openCertificate}
-                      disabled={busy}
-                      icon={<Icon name="document" size={14} color={color.text} />}
-                    >
-                      View PCN certificate
-                    </Button>
+                    certQ.data ? (
+                      <CertificateViewer
+                        url={certQ.data.url}
+                        previewUrl={certQ.data.preview_url}
+                        isPdf={certQ.data.is_pdf}
+                        label={name}
+                      />
+                    ) : (
+                      <Skeleton width="100%" height={180} radius="lg" />
+                    )
                   ) : null}
                 </View>
               </Surface>
@@ -506,8 +515,18 @@ export default function ConsoleCustomerDetailScreen() {
             <Surface level="sm" padded="base" rounded="lg">
               <View style={{ gap: space.md }}>
                 <Row icon="building" label="Business name" value={customer.company_name} />
-                <Row icon="email"    label="Email"         value={customer.user.email} />
-                <Row icon="phone"    label="Phone"         value={customer.user.phone} />
+                <Row
+                  icon="email"
+                  label="Email"
+                  value={customer.user.email}
+                  onPress={() => void emailAddress(customer.user.email)}
+                />
+                <Row
+                  icon="phone"
+                  label="Phone"
+                  value={customer.user.phone}
+                  onPress={() => void callNumber(customer.user.phone)}
+                />
                 <Row
                   icon="location"
                   label="Address"
@@ -535,18 +554,42 @@ export default function ConsoleCustomerDetailScreen() {
   );
 }
 
-function Row({ icon, label, value }: {
-  icon: IconName; label: string; value: string | null;
+/**
+ * A detail row. When `onPress` is given the value renders in brand colour with
+ * a trailing affordance, because a phone number that dials should look
+ * different from one that doesn't — otherwise people either don't try it, or
+ * try it on the ones that aren't links.
+ */
+function Row({ icon, label, value, onPress }: {
+  icon: IconName; label: string; value: string | null; onPress?: () => void;
 }) {
-  return (
-    <View style={{ flexDirection: 'row', gap: space.md }}>
-      <Icon name={icon} size={16} color={color.textTertiary} />
+  const tappable = !!value && !!onPress;
+
+  const body = (
+    <View style={{ flexDirection: 'row', gap: space.md, alignItems: 'center' }}>
+      <Icon name={icon} size={16} color={tappable ? color.brand : color.textTertiary} />
       <View style={{ flex: 1 }}>
         <Text variant="caption" tone="tertiary">{label}</Text>
-        <Text variant="callout" tone={value ? 'default' : 'disabled'}>
+        <Text variant="callout" tone={!value ? 'disabled' : tappable ? 'brand' : 'default'}>
           {value ?? 'Not provided'}
         </Text>
       </View>
+      {tappable ? <Icon name="chevron-right" size={14} color={color.textDisabled} /> : null}
     </View>
+  );
+
+  if (!tappable) return body;
+
+  return (
+    <Pressable
+      onPress={onPress}
+      haptic="light"
+      pressOpacity={0.6}
+      accessibilityRole="button"
+      accessibilityLabel={`${label}: ${value}`}
+      style={{ minHeight: layout.tapTarget, justifyContent: 'center' }}
+    >
+      {body}
+    </Pressable>
   );
 }
