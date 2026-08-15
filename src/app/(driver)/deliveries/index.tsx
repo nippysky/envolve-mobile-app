@@ -31,6 +31,8 @@ import { color, space, radius, gutter, layout } from '@/constants/theme';
 import { callNumber } from '@/lib/contact';
 import { formatNaira } from '@/lib/format';
 import { useRefresh } from '@/hooks/use-refresh';
+import { useUnreadCount } from '@/hooks/use-unread-count';
+import { NotificationBell } from '@/components/shared/NotificationBell';
 import { openDirections } from '@/lib/directions';
 import { useAuth } from '@/contexts/AuthContext';
 import {
@@ -76,7 +78,9 @@ export default function DriverTodayScreen() {
   }, [router]);
 
 
-  const { refreshing, onRefresh } = useRefresh(deliveriesQ.refetch);
+  const { unread, refetch: refetchUnread } = useUnreadCount();
+
+  const { refreshing, onRefresh } = useRefresh(deliveriesQ.refetch, refetchUnread);
 
   return (
     <View style={{ flex: 1, backgroundColor: color.bg }}>
@@ -91,6 +95,12 @@ export default function DriverTodayScreen() {
               + (toCollect > 0 ? ` · ${toCollect} needs payment collected` : '')
           }
           scrollY={scrollY}
+          right={
+            <NotificationBell
+              count={unread}
+              onPress={() => router.push('/(driver)/notifications' as never)}
+            />
+          }
         />
 
         <Animated.FlatList

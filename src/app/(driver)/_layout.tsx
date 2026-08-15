@@ -32,8 +32,9 @@ export default function DriverLayout() {
       <Tabs.Screen name="history"          options={{ title: 'History' }} />
       <Tabs.Screen name="profile"          options={{ title: 'Account' }} />
 
-      {/* Pushed route — part of the stack, never a tab. */}
+      {/* Pushed routes — part of the stack, never tabs. */}
       <Tabs.Screen name="deliveries/[id]"  options={{ href: null }} />
+      <Tabs.Screen name="notifications"    options={{ href: null }} />
     </Tabs>
   );
 }

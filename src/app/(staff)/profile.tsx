@@ -18,7 +18,7 @@ import { useRouter } from 'expo-router';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 
 import {
-  Text, Button, Icon, Surface, Badge,
+  Text, Button, Pressable, Icon, Surface, Badge,
 } from '@/components/ui';
 import { ScreenHeader } from '@/components/shared/ScreenHeader';
 import { color, space, radius, gutter, layout } from '@/constants/theme';
@@ -171,38 +171,50 @@ export default function ConsoleProfileScreen() {
   );
 }
 
+/**
+ * A tappable settings row.
+ *
+ * `Pressable`, not `Button` — `Button` sizes itself to a fixed height for a
+ * single line of label text, so a row with a title *and* a hint gets its second
+ * line clipped. `minHeight` lets this grow to fit whatever it holds while still
+ * guaranteeing a 44pt target.
+ */
 function Row({ icon, label, hint, onPress, last = false }: {
   icon: IconName; label: string; hint: string; onPress: () => void; last?: boolean;
 }) {
   return (
-    <Button
-      variant="ghost"
-      fullWidth
+    <Pressable
       onPress={onPress}
+      haptic="light"
+      pressOpacity={0.6}
+      accessibilityRole="button"
+      accessibilityLabel={`${label}. ${hint}`}
       style={{
-        justifyContent: 'flex-start',
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: space.md,
         paddingHorizontal: space.base,
         paddingVertical: space.md,
+        minHeight: layout.tapTarget,
         borderBottomWidth: last ? 0 : layout.hairlineWidth,
         borderBottomColor: color.borderSubtle,
-        borderRadius: 0,
       }}
     >
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.md, flex: 1 }}>
-        <View style={{
-          width: 32, height: 32, borderRadius: radius.full,
-          backgroundColor: color.surfaceMuted,
-          alignItems: 'center', justifyContent: 'center',
-        }}>
-          <Icon name={icon} size={15} color={color.textSecondary} />
-        </View>
-        <View style={{ flex: 1 }}>
-          <Text variant="body">{label}</Text>
-          <Text variant="caption" tone="tertiary">{hint}</Text>
-        </View>
-        <Icon name="chevron-right" size={15} color={color.textDisabled} />
+      <View style={{
+        width: 32, height: 32, borderRadius: radius.full,
+        backgroundColor: color.surfaceMuted,
+        alignItems: 'center', justifyContent: 'center',
+      }}>
+        <Icon name={icon} size={15} color={color.textSecondary} />
       </View>
-    </Button>
+
+      <View style={{ flex: 1, gap: 1 }}>
+        <Text variant="body">{label}</Text>
+        <Text variant="caption" tone="tertiary">{hint}</Text>
+      </View>
+
+      <Icon name="chevron-right" size={15} color={color.textDisabled} />
+    </Pressable>
   );
 }
 

@@ -10,13 +10,12 @@ import React, { useCallback } from 'react';
 import { View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
-import { useQuery } from '@tanstack/react-query';
 
 import { Pressable, Icon } from '@/components/ui';
 import { ScreenHeader } from '@/components/shared/ScreenHeader';
 import { NotificationsList, useMarkAllRead } from '@/components/shared/NotificationsList';
 import { color } from '@/constants/theme';
-import { getUnreadCount } from '@/lib/services/account.service';
+import { useUnreadCount } from '@/hooks/use-unread-count';
 
 /** Web paths → console routes. Unrecognised links simply don't navigate. */
 function resolveRoute(link: string | null): string | null {
@@ -42,13 +41,7 @@ export default function ConsoleNotificationsScreen() {
   const router = useRouter();
   const markAll = useMarkAllRead();
 
-  const unreadQ = useQuery({
-    queryKey: ['notifications', 'unread-count'],
-    queryFn:  getUnreadCount,
-    staleTime: 30_000,
-  });
-
-  const unread = unreadQ.data?.unread_count ?? 0;
+  const { unread } = useUnreadCount();
 
   const navigate = useCallback((route: string) => {
     router.push(route as never);

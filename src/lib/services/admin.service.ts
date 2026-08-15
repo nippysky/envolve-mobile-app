@@ -106,8 +106,7 @@ export function listOrders(opts: {
 } = {}) {
   return apiFetch<Paginated<AdminOrder>>(`/api/orders?${qs({
     page: opts.page ?? 1, limit: opts.limit ?? 20,
-    search: opts.search, status: opts.status, payment_status: opts.payment_status,
-  })}`);
+    search: opts.search, status: opts.status, payment_status: opts.payment_status })}`);
 }
 
 export function updateOrderStatus(id: number, status: OrderStatus, notes?: string) {
@@ -214,8 +213,7 @@ export function listCustomers(opts: {
   return apiFetch<Paginated<AdminCustomer>>(`/api/customers?${qs({
     page: opts.page ?? 1, limit: opts.limit ?? 20,
     search: opts.search, status: opts.status,
-    assigned_staff_id: opts.assigned_staff_id,
-  })}`);
+    assigned_staff_id: opts.assigned_staff_id })}`);
 }
 
 /**
@@ -373,8 +371,7 @@ export function listAdminProducts(opts: {
 } = {}) {
   return apiFetch<Paginated<AdminProduct>>(`/api/products?${qs({
     page: opts.page ?? 1, limit: opts.limit ?? 20,
-    search: opts.search, status: opts.status, category: opts.category,
-  })}`);
+    search: opts.search, status: opts.status, category: opts.category })}`);
 }
 
 export function getAdminProduct(sku: string) {
@@ -434,8 +431,7 @@ export function listInventory(opts: {
     page: opts.page ?? 1, limit: opts.limit ?? 20,
     search: opts.search,
     low_stock:   opts.low_stock   ? 'true' : undefined,
-    near_expiry: opts.near_expiry ? 'true' : undefined,
-  })}`);
+    near_expiry: opts.near_expiry ? 'true' : undefined })}`);
 }
 
 export interface InventoryStats {
@@ -507,8 +503,7 @@ export function listDeliveries(opts: {
 } = {}) {
   return apiFetch<Paginated<AdminDelivery>>(`/api/deliveries?${qs({
     page: opts.page ?? 1, limit: opts.limit ?? 20,
-    search: opts.search, status: opts.status,
-  })}`);
+    search: opts.search, status: opts.status })}`);
 }
 
 /**
@@ -569,8 +564,7 @@ export function listStaff(opts: {
 } = {}) {
   return apiFetch<Paginated<StaffMember>>(`/api/staff?${qs({
     page: opts.page ?? 1, limit: opts.limit ?? 100,
-    search: opts.search, role: opts.role, status: opts.status,
-  })}`);
+    search: opts.search, role: opts.role, status: opts.status })}`);
 }
 
 export function createStaff(input: {
@@ -619,9 +613,14 @@ export interface AppSettings {
   auto_logout?:         string;
   vat_enabled?:         string;
   vat_rate?:            string;
-  referral_threshold?:  string;
-  referral_reward?:     string;
-  staff_order_scope?:   string;
+  /** All referral values are naira — they feed one wallet. */
+  referral_signup_bonus?:       string;
+  referral_threshold?:          string;
+  referral_reward?:             string;
+  /** 'true' lets customers spend their balance at checkout. Off by default. */
+  referral_redemption_enabled?: string;
+  referral_min_redemption?:     string;
+  staff_order_scope?:           string;
 }
 
 /** Returns the settings map directly as `data` — not wrapped in `{ settings }`. */
@@ -666,8 +665,7 @@ export function listAuditLogs(opts: {
   return apiFetch<Paginated<AuditLogEntry>>(`/api/admin/audit-logs?${qs({
     page: opts.page ?? 1, limit: opts.limit ?? 25,
     search: opts.search, action: opts.action, user_type: opts.user_type,
-    entity_type: opts.entity_type, from: opts.from, to: opts.to,
-  })}`);
+    entity_type: opts.entity_type, from: opts.from, to: opts.to })}`);
 }
 
 /* ══ Search ════════════════════════════════════════════════════════════════ */

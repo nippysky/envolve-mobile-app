@@ -1,10 +1,15 @@
 /**
- * Notifications — customer.
+ * Notifications — driver.
  *
- * Uses the shared list; only the link translation is audience-specific. The
- * API's `link` is a web path like `/portal/orders/12`, translated here to the
- * native customer route so a notification about an order lands on the order
- * screen rather than opening a browser.
+ * The driver app had no notifications surface at all, which meant a delivery
+ * reassigned or cancelled by dispatch reached the driver only if they happened
+ * to pull-to-refresh the right screen.
+ *
+ * Link translation is narrower here than for the other audiences on purpose. A
+ * driver has no order screen and no customer records, so an order link resolves
+ * to their delivery list rather than pushing a route that would render an
+ * empty or forbidden screen. Anything unrecognised simply doesn't navigate —
+ * the notification still reads fine as text.
  */
 
 import React, { useCallback } from 'react';
@@ -15,26 +20,24 @@ import { useRouter } from 'expo-router';
 import { Pressable, Icon } from '@/components/ui';
 import { ScreenHeader } from '@/components/shared/ScreenHeader';
 import { NotificationsList, useMarkAllRead } from '@/components/shared/NotificationsList';
-import { color } from '@/constants/theme';
+import { color, layout } from '@/constants/theme';
 import { useUnreadCount } from '@/hooks/use-unread-count';
 
-/** Web paths → customer routes. Unrecognised links simply don't navigate. */
 function resolveRoute(link: string | null): string | null {
   if (!link) return null;
 
-  const order = link.match(/\/(?:portal|admin)\/orders\/(\d+)/);
-  if (order) return `/(customer)/orders/${order[1]}`;
+  const delivery = link.match(/\/deliveries\/(\d+)/);
+  if (delivery) return `/(driver)/deliveries/${delivery[1]}`;
 
-  if (link.includes('/referral')) return '/(customer)/referrals';
-  if (link.includes('/orders'))   return '/(customer)/orders';
-  if (link.includes('/catalog'))  return '/(customer)/catalog';
+  if (link.includes('/deliveries')) return '/(driver)/deliveries';
+  // Orders exist for a driver only as the delivery attached to them.
+  if (link.includes('/orders'))     return '/(driver)/deliveries';
   return null;
 }
 
-export default function CustomerNotificationsScreen() {
-  const router = useRouter();
+export default function DriverNotificationsScreen() {
+  const router  = useRouter();
   const markAll = useMarkAllRead();
-
   const { unread } = useUnreadCount();
 
   const navigate = useCallback((route: string) => {
@@ -69,6 +72,7 @@ export default function CustomerNotificationsScreen() {
         <NotificationsList
           resolveRoute={resolveRoute}
           onNavigate={navigate}
+          bottomInset={layout.tabBarHeight}
         />
       </SafeAreaView>
     </View>

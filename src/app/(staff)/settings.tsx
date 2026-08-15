@@ -11,9 +11,9 @@
  * says so — a settings page that lies about having saved is worse than one that
  * errors.
  *
- * Referral values are labelled with their real units, matching the caveat
- * documented on `/api/customers/me`: the threshold and reward are naira, but
- * the signup award is dimensionless points.
+ * Every referral value is naira — the signup bonus, the spend threshold and the
+ * spend reward all credit the same wallet. Redemption is the commercial switch:
+ * earning runs from day one, spending opens when the business turns it on.
  */
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
@@ -23,7 +23,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 
 import {
-  Text, Button, Input, Pressable, Icon, Surface, Skeleton, EmptyState,
+  Text, Button, Input, Pressable, Icon, Skeleton, EmptyState,
 } from '@/components/ui';
 import { ScreenHeader } from '@/components/shared/ScreenHeader';
 import { color, space, radius, gutter, layout } from '@/constants/theme';
@@ -228,11 +228,20 @@ export default function SettingsScreen() {
                 <Group
                   index={2}
                   title="Referrals"
-                  hint="These values are read live by the web portal and the mobile app."
+                  hint="All values are naira and feed one balance. Read live by the web portal and the app."
                 >
                   <Input
+                    label="Signup bonus"
+                    hint="Credited the moment a pharmacy signs up with the code"
+                    value={form.referral_signup_bonus ?? ''}
+                    onChangeText={v => set('referral_signup_bonus', v)}
+                    keyboardType="number-pad"
+                    editable={!busy}
+                    leading={<Text variant="callout" tone="tertiary">₦</Text>}
+                  />
+                  <Input
                     label="Qualifying spend"
-                    hint="Naira a referred pharmacy must spend before the reward is awarded"
+                    hint="Paid orders a referred pharmacy must reach"
                     value={form.referral_threshold ?? ''}
                     onChangeText={v => set('referral_threshold', v)}
                     keyboardType="number-pad"
@@ -240,8 +249,8 @@ export default function SettingsScreen() {
                     leading={<Text variant="callout" tone="tertiary">₦</Text>}
                   />
                   <Input
-                    label="Reward"
-                    hint="Naira credited to the referrer once that spend is reached"
+                    label="Spend reward"
+                    hint="Credited to the referrer once that spend is reached"
                     value={form.referral_reward ?? ''}
                     onChangeText={v => set('referral_reward', v)}
                     keyboardType="number-pad"
@@ -249,17 +258,27 @@ export default function SettingsScreen() {
                     leading={<Text variant="callout" tone="tertiary">₦</Text>}
                   />
 
-                  <Surface tone="subtle" level="none" padded="md" rounded="md">
-                    <View style={{ flexDirection: 'row', gap: space.sm }}>
-                      <Icon name="info" size={14} color={color.textTertiary} />
-                      <Text variant="caption" tone="tertiary" style={{ flex: 1 }}>
-                        A separate, fixed signup award is also credited in points when
-                        someone registers with a code. Points and naira share one
-                        balance column, so the total is shown as “reward points”
-                        rather than a naira figure.
-                      </Text>
-                    </View>
-                  </Surface>
+                  {/* The commercial switch. Earning runs from day one; spending
+                      opens when the business decides. */}
+                  <Toggle
+                    label="Let customers spend their balance"
+                    hint="Applies credit at checkout. Balances accrue either way and never expire."
+                    value={isOn(form.referral_redemption_enabled)}
+                    onToggle={() => toggle('referral_redemption_enabled')}
+                    disabled={busy}
+                  />
+
+                  {isOn(form.referral_redemption_enabled) ? (
+                    <Input
+                      label="Minimum balance to redeem"
+                      hint="Below this, the balance can’t be spent"
+                      value={form.referral_min_redemption ?? ''}
+                      onChangeText={v => set('referral_min_redemption', v)}
+                      keyboardType="number-pad"
+                      editable={!busy}
+                      leading={<Text variant="callout" tone="tertiary">₦</Text>}
+                    />
+                  ) : null}
                 </Group>
 
                 {/* ── Operations ── */}

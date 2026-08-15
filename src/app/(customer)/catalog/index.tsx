@@ -22,20 +22,21 @@ import Animated, {
 } from 'react-native-reanimated';
 
 import {
-  Text, Input, Pressable, Icon, Button, Surface, ProductCardSkeleton, EmptyState,
+  Text, Input, Pressable, Icon, ProductCardSkeleton, EmptyState,
 } from '@/components/ui';
 import { ProductCard } from '@/components/catalog/ProductCard';
+import { NotificationBell } from '@/components/shared/NotificationBell';
 import { color, space, radius, gutter, layout, elevation } from '@/constants/theme';
 import { formatNaira } from '@/lib/format';
 import { useRefresh } from '@/hooks/use-refresh';
 import { useAuth } from '@/contexts/AuthContext';
 import { useBasket } from '@/hooks/use-basket';
 import { useDebounced } from '@/hooks/use-debounced';
+import { useUnreadCount } from '@/hooks/use-unread-count';
 import {
   listProducts, listCategories,
   type CatalogSort, type CatalogProduct,
 } from '@/lib/services/catalog.service';
-import { getUnreadCount } from '@/lib/services/account.service';
 
 const SORTS: { value: CatalogSort; label: string }[] = [
   { value: 'newest',     label: 'Newest' },
@@ -64,11 +65,7 @@ export default function CustomerCatalogScreen() {
     onScroll: e => { scrollY.value = e.contentOffset.y; },
   });
 
-  const unreadQ = useQuery({
-    queryKey: ['notifications', 'unread-count'],
-    queryFn:  getUnreadCount,
-    staleTime: 30_000,
-  });
+  const { unread, refetch: refetchUnread } = useUnreadCount();
 
   const categoriesQ = useQuery({
     queryKey: ['catalog', 'categories'],
@@ -93,8 +90,7 @@ export default function CustomerCatalogScreen() {
     [productsQ.data],
   );
 
-  const total  = productsQ.data?.pages[0]?.pagination.total ?? 0;
-  const unread = unreadQ.data?.unread_count ?? 0;
+  const total = productsQ.data?.pages[0]?.pagination.total ?? 0;
 
   // Collapses the greeting into the search row, keeping search pinned.
   const greetingStyle = useAnimatedStyle(() => ({
@@ -110,7 +106,7 @@ export default function CustomerCatalogScreen() {
   const firstName = user?.first_name ?? 'there';
 
 
-  const { refreshing, onRefresh } = useRefresh(productsQ.refetch, unreadQ.refetch);
+  const { refreshing, onRefresh } = useRefresh(productsQ.refetch, refetchUnread);
 
   return (
     <View style={{ flex: 1, backgroundColor: color.bg }}>
@@ -131,10 +127,8 @@ export default function CustomerCatalogScreen() {
                   label="Track an order"
                   onPress={() => router.push('/(customer)/track' as never)}
                 />
-                <HeaderButton
-                  icon="notifications"
-                  label="Notifications"
-                  badge={unread}
+                <NotificationBell
+                  count={unread}
                   onPress={() => router.push('/(customer)/notifications' as never)}
                 />
               </View>
@@ -355,8 +349,7 @@ export default function CustomerCatalogScreen() {
 /* ── Header icon button ─────────────────────────────────────────────────── */
 
 function HeaderButton({
-  icon, label, onPress, badge = 0,
-}: {
+  icon, label, onPress, badge = 0 }: {
   icon: 'track' | 'notifications';
   label: string;
   onPress: () => void;

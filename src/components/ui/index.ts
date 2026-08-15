@@ -35,6 +35,9 @@ export type { EmptyStateProps } from './EmptyState';
 export { QuantityStepper }    from './QuantityStepper';
 export type { QuantityStepperProps } from './QuantityStepper';
 
+export { Sheet, SheetOption, SelectField } from './Sheet';
+export type { SheetProps, SheetOptionProps, SelectFieldProps } from './Sheet';
+
 export { ToastHost, toastConfig } from './Toast';
 
 export { TabBar }           from '@/components/navigation/TabBar';

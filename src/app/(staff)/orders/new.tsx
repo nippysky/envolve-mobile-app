@@ -5,7 +5,16 @@
  * for one-handed use under time pressure: pick who, add what, say how it was
  * paid, send. Four steps, one scroll, no wizard.
  *
- * Why the payment step looks the way it does
+ * Why every choice lives in a sheet
+ * ─────────────────────────────────
+ * Laying the options out inline made the form four screens tall before the rep
+ * had entered anything: a live search box plus six pharmacy results, then four
+ * payment cards, then four "collected via" chips. All of that is scroll cost
+ * for choices made once. Each is now a single row showing the current value,
+ * with the options behind a sheet — so the whole order fits in roughly one
+ * screen and reads as a summary you can check before sending.
+ *
+ * Why the payment step works the way it does
  * ──────────────────────────────────────────
  * Reps routinely collect money *before* the order exists — cash at the counter,
  * a POS swipe, a transfer that landed yesterday. So `payment_received` is a
@@ -32,7 +41,7 @@ import Animated, { FadeIn, FadeInDown, Layout } from 'react-native-reanimated';
 
 import {
   Text, Button, Input, Pressable, Icon, Surface, Badge, QuantityStepper,
-  EmptyState, RowSkeleton,
+  EmptyState, RowSkeleton, Sheet, SheetOption, SelectField,
 } from '@/components/ui';
 import { ScreenHeader } from '@/components/shared/ScreenHeader';
 import { color, space, radius, gutter, layout } from '@/constants/theme';
@@ -63,11 +72,17 @@ const METHODS: {
 ];
 
 const RECEIVED_VIA = [
-  { value: 'cash',          label: 'Cash' },
-  { value: 'bank_transfer', label: 'Transfer' },
-  { value: 'pos',           label: 'POS' },
-  { value: 'other',         label: 'Other' },
+  { value: 'cash',          label: 'Cash',     hint: 'Notes taken at the counter' },
+  { value: 'bank_transfer', label: 'Transfer', hint: 'Landed in the company account' },
+  { value: 'pos',           label: 'POS',      hint: 'Card swiped on the terminal' },
+  { value: 'other',         label: 'Other',    hint: 'Anything else — explain in the note' },
 ] as const;
+
+type ReceivedVia = typeof RECEIVED_VIA[number]['value'];
+
+function customerName(c: AdminCustomer): string {
+  return c.company_name ?? `${c.user.first_name} ${c.user.last_name}`.trim();
+}
 
 export default function OnBehalfOrderScreen() {
   const router = useRouter();
@@ -77,9 +92,12 @@ export default function OnBehalfOrderScreen() {
   const [customer, setCustomer] = useState<AdminCustomer | null>(null);
   const [lines,    setLines]    = useState<Line[]>([]);
 
-  const [customerSearch, setCustomerSearch] = useState('');
-  const [productSearch,  setProductSearch]  = useState('');
-  const [picking,        setPicking]        = useState(false);
+  // One piece of state per sheet, rather than a single "which sheet" union —
+  // they never overlap, and separate flags keep each sheet's props honest.
+  const [pickingCustomer, setPickingCustomer] = useState(false);
+  const [pickingProduct,  setPickingProduct]  = useState(false);
+  const [pickingMethod,   setPickingMethod]   = useState(false);
+  const [pickingVia,      setPickingVia]      = useState(false);
 
   const [street, setStreet] = useState('');
   const [city,   setCity]   = useState('');
@@ -89,31 +107,12 @@ export default function OnBehalfOrderScreen() {
   const [po,     setPo]     = useState('');
 
   const [method,    setMethod]    = useState<OnBehalfPaymentMethod>('payment_received');
-  const [via,       setVia]       = useState<typeof RECEIVED_VIA[number]['value']>('cash');
+  const [via,       setVia]       = useState<ReceivedVia>('cash');
   const [reference, setReference] = useState('');
   const [payNote,   setPayNote]   = useState('');
 
   const [busy, setBusy] = useState(false);
   const [errs, setErrs] = useState<Record<string, string>>({});
-
-  const debouncedCustomer = useDebounced(customerSearch, 350);
-  const debouncedProduct  = useDebounced(productSearch, 350);
-
-  /* Only APPROVED customers can be ordered for — the API rejects the rest, so
-     the picker never shows them rather than failing at submit. */
-  const customersQ = useQuery({
-    queryKey: ['customers', 'approved', debouncedCustomer],
-    queryFn:  () => listCustomers({ search: debouncedCustomer, status: 'APPROVED', limit: 25 }),
-    enabled:  !customer,
-    staleTime: 30_000,
-  });
-
-  const productsQ = useQuery({
-    queryKey: ['catalog', 'products', 'on-behalf', debouncedProduct],
-    queryFn:  () => listProducts({ search: debouncedProduct, limit: 25 }),
-    enabled:  picking,
-    staleTime: 60_000,
-  });
 
   // Prefill the delivery details from the account, then let the rep override.
   useEffect(() => {
@@ -132,6 +131,8 @@ export default function OnBehalfOrderScreen() {
     [lines],
   );
 
+  const units = useMemo(() => lines.reduce((s, l) => s + l.quantity, 0), [lines]);
+
   const addProduct = useCallback((product: CatalogProduct) => {
     setLines(prev => {
       const existing = prev.find(l => l.product.id === product.id);
@@ -142,8 +143,10 @@ export default function OnBehalfOrderScreen() {
       }
       return [...prev, { product, quantity: Math.max(1, product.minimum_order) }];
     });
-    setPicking(false);
-    setProductSearch('');
+    setErrs(p => ({ ...p, items: '' }));
+    // Deliberately left open. Orders placed on the phone are rarely one line,
+    // and closing after each pick means reopening and re-searching every time.
+    // The row flips to "Added", which is the confirmation the rep needs.
   }, []);
 
   const setQty = useCallback((productId: number, quantity: number) => {
@@ -152,6 +155,12 @@ export default function OnBehalfOrderScreen() {
 
   const removeLine = useCallback((productId: number) => {
     setLines(prev => prev.filter(l => l.product.id !== productId));
+  }, []);
+
+  const chooseCustomer = useCallback((c: AdminCustomer) => {
+    setCustomer(c);
+    setErrs(p => ({ ...p, customer: '' }));
+    setPickingCustomer(false);
   }, []);
 
   const validate = useCallback(() => {
@@ -208,65 +217,9 @@ export default function OnBehalfOrderScreen() {
   }, [busy, validate, customer, lines, state, city, street, phone, notes, po,
       method, via, reference, payNote, queryClient, router]);
 
-  /* ── Product picker ── */
-  if (picking) {
-    return (
-      <View style={{ flex: 1, backgroundColor: color.bg }}>
-        <SafeAreaView style={{ flex: 1 }} edges={['top']}>
-          <ScreenHeader
-            variant="compact"
-            back
-            onBack={() => { setPicking(false); setProductSearch(''); }}
-            title="Add products"
-          />
+  const selectedMethod = METHODS.find(m => m.value === method)!;
+  const selectedVia    = RECEIVED_VIA.find(v => v.value === via)!;
 
-          <View style={{ paddingHorizontal: gutter, paddingBottom: space.md }}>
-            <Input
-              placeholder="Search brand, generic or SKU"
-              value={productSearch}
-              onChangeText={setProductSearch}
-              autoCapitalize="none"
-              autoCorrect={false}
-              autoFocus
-              returnKeyType="search"
-              leading={<Icon name="search" size={17} color={color.textTertiary} />}
-            />
-          </View>
-
-          <FlatList
-            data={productsQ.data?.records ?? []}
-            keyExtractor={p => p.sku}
-            contentContainerStyle={{ paddingHorizontal: gutter, gap: space.sm, paddingBottom: space['3xl'] }}
-            keyboardShouldPersistTaps="handled"
-            showsVerticalScrollIndicator={false}
-            renderItem={({ item }) => (
-              <ProductPickRow
-                product={item}
-                inOrder={lines.some(l => l.product.id === item.id)}
-                onPress={() => addProduct(item)}
-              />
-            )}
-            ListEmptyComponent={
-              productsQ.isLoading ? (
-                <View style={{ gap: space.sm }}>
-                  {Array.from({ length: 5 }).map((_, i) => <RowSkeleton key={i} />)}
-                </View>
-              ) : (
-                <EmptyState
-                  iconName="search"
-                  compact
-                  title="No products found"
-                  subtitle={productSearch ? `Nothing matches “${productSearch}”.` : 'Start typing to search the catalogue.'}
-                />
-              )
-            }
-          />
-        </SafeAreaView>
-      </View>
-    );
-  }
-
-  /* ── Main ── */
   return (
     <View style={{ flex: 1, backgroundColor: color.bg }}>
       <SafeAreaView style={{ flex: 1 }} edges={['top']}>
@@ -288,91 +241,31 @@ export default function OnBehalfOrderScreen() {
             showsVerticalScrollIndicator={false}
           >
             {/* ── 1. Customer ── */}
-            <Section step="1" title="Which pharmacy?" error={errs.customer}>
-              {customer ? (
-                <Surface level="sm" padded="base" rounded="lg">
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.md }}>
-                    <View style={{
-                      width: 38, height: 38, borderRadius: radius.full,
-                      backgroundColor: color.brandSoft,
-                      alignItems: 'center', justifyContent: 'center',
-                    }}>
-                      <Icon name="building" size={17} color={color.brand} filled />
-                    </View>
-                    <View style={{ flex: 1 }}>
-                      <Text variant="bodyMedium" numberOfLines={1}>
-                        {customer.company_name ?? `${customer.user.first_name} ${customer.user.last_name}`}
-                      </Text>
-                      <Text variant="caption" tone="tertiary" numberOfLines={1}>
-                        {customer.user.email}
-                      </Text>
-                    </View>
-                    <Pressable
-                      onPress={() => { setCustomer(null); setLines([]); }}
-                      haptic="light"
-                      pressOpacity={0.6}
-                      hitSlop={8}
-                      disabled={busy}
-                    >
-                      <Text variant="label" tone="brand">Change</Text>
-                    </Pressable>
-                  </View>
-                </Surface>
-              ) : (
-                <View style={{ gap: space.sm }}>
-                  <Input
-                    placeholder="Search approved pharmacies"
-                    value={customerSearch}
-                    onChangeText={setCustomerSearch}
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                    leading={<Icon name="search" size={17} color={color.textTertiary} />}
-                  />
-
-                  {customersQ.isLoading ? (
-                    <RowSkeleton />
-                  ) : (customersQ.data?.records.length ?? 0) === 0 ? (
-                    <Surface tone="subtle" level="none" padded="base" rounded="md">
-                      <Text variant="caption" tone="tertiary">
-                        {customerSearch
-                          ? 'No approved pharmacy matches that search.'
-                          : 'Search by pharmacy name, contact or email. Only approved accounts can be ordered for.'}
-                      </Text>
-                    </Surface>
-                  ) : (
-                    <Surface level="sm" padded="none" rounded="lg">
-                      {(customersQ.data?.records ?? []).slice(0, 6).map((c, i, arr) => (
-                        <Pressable
-                          key={c.id}
-                          onPress={() => setCustomer(c)}
-                          haptic="light"
-                          pressOpacity={0.6}
-                          style={{
-                            flexDirection: 'row', alignItems: 'center', gap: space.md,
-                            paddingHorizontal: space.base, paddingVertical: space.md,
-                            borderBottomWidth: i === arr.length - 1 ? 0 : layout.hairlineWidth,
-                            borderBottomColor: color.borderSubtle,
-                          }}
-                        >
-                          <View style={{ flex: 1 }}>
-                            <Text variant="body" numberOfLines={1}>
-                              {c.company_name ?? `${c.user.first_name} ${c.user.last_name}`}
-                            </Text>
-                            <Text variant="caption" tone="tertiary" numberOfLines={1}>
-                              {[c.city, c.state].filter(Boolean).join(', ') || c.user.email}
-                            </Text>
-                          </View>
-                          <Icon name="chevron-right" size={15} color={color.textDisabled} />
-                        </Pressable>
-                      ))}
-                    </Surface>
-                  )}
-                </View>
-              )}
+            <Section step="1" title="Which pharmacy?" done={!!customer}>
+              <SelectField
+                icon="building"
+                value={customer ? customerName(customer) : undefined}
+                placeholder="Choose a pharmacy"
+                caption={
+                  customer
+                    ? ([customer.city, customer.state].filter(Boolean).join(', ') || customer.user.email)
+                    : 'Approved accounts only'
+                }
+                error={errs.customer}
+                disabled={busy}
+                onPress={() => setPickingCustomer(true)}
+                action={customer ? <Text variant="label" tone="brand">Change</Text> : undefined}
+              />
             </Section>
 
             {/* ── 2. Items ── */}
-            <Section step="2" title="What are they ordering?" error={errs.items}>
+            <Section
+              step="2"
+              title="What are they ordering?"
+              error={errs.items}
+              done={lines.length > 0}
+              trailing={lines.length > 0 ? `${lines.length} ${lines.length === 1 ? 'line' : 'lines'}` : undefined}
+            >
               <View style={{ gap: space.sm }}>
                 {lines.map(line => (
                   <Animated.View
@@ -382,22 +275,7 @@ export default function OnBehalfOrderScreen() {
                   >
                     <Surface level="sm" padded="md" rounded="lg">
                       <View style={{ flexDirection: 'row', gap: space.md, alignItems: 'center' }}>
-                        <View style={{
-                          width: 46, height: 46, borderRadius: radius.md,
-                          backgroundColor: color.surfaceSubtle,
-                          alignItems: 'center', justifyContent: 'center', overflow: 'hidden',
-                        }}>
-                          {line.product.primary_image ? (
-                            <Image
-                              source={{ uri: line.product.primary_image }}
-                              style={{ width: '76%', height: '76%' }}
-                              contentFit="contain"
-                              cachePolicy="memory-disk"
-                            />
-                          ) : (
-                            <Icon name="product" size={18} color={color.textDisabled} />
-                          )}
-                        </View>
+                        <ProductThumb uri={line.product.primary_image} size={46} />
 
                         <View style={{ flex: 1, gap: 2 }}>
                           <Text variant="bodyMedium" numberOfLines={1}>{line.product.brand_name}</Text>
@@ -430,7 +308,7 @@ export default function OnBehalfOrderScreen() {
                 <Button
                   variant={lines.length ? 'secondary' : 'tinted'}
                   fullWidth
-                  onPress={() => setPicking(true)}
+                  onPress={() => setPickingProduct(true)}
                   disabled={busy}
                   icon={<Icon name="plus" size={16} color={lines.length ? color.text : color.brand} />}
                 >
@@ -508,52 +386,14 @@ export default function OnBehalfOrderScreen() {
             </Section>
 
             {/* ── 4. Payment ── */}
-            <Section step="4" title="How is it being paid?">
-              <View style={{ gap: space.sm }}>
-                {METHODS.map(m => {
-                  const active = method === m.value;
-                  return (
-                    <Pressable
-                      key={m.value}
-                      onPress={() => setMethod(m.value)}
-                      disabled={busy}
-                      haptic="light"
-                      pressScale={0.98}
-                      accessibilityRole="radio"
-                      accessibilityState={{ selected: active }}
-                      style={{
-                        flexDirection: 'row', alignItems: 'center', gap: space.md,
-                        padding: space.base,
-                        borderRadius: radius.lg,
-                        backgroundColor: active ? color.brandSoft : color.surface,
-                        borderWidth: active ? 1.5 : layout.hairlineWidth,
-                        borderColor: active ? color.brand : color.border,
-                      }}
-                    >
-                      <View style={{
-                        width: 34, height: 34, borderRadius: radius.full,
-                        backgroundColor: active ? color.brand : color.surfaceMuted,
-                        alignItems: 'center', justifyContent: 'center',
-                      }}>
-                        <Icon name={m.icon} size={15} color={active ? '#fff' : color.textTertiary} filled={active} />
-                      </View>
-                      <View style={{ flex: 1 }}>
-                        <Text variant="bodyMedium">{m.label}</Text>
-                        <Text variant="caption" tone="tertiary">{m.hint}</Text>
-                      </View>
-                      <View style={{
-                        width: 20, height: 20, borderRadius: radius.full,
-                        borderWidth: active ? 0 : 1.5,
-                        borderColor: color.borderStrong,
-                        backgroundColor: active ? color.brand : 'transparent',
-                        alignItems: 'center', justifyContent: 'center',
-                      }}>
-                        {active ? <Icon name="check" size={11} color="#fff" /> : null}
-                      </View>
-                    </Pressable>
-                  );
-                })}
-              </View>
+            <Section step="4" title="How is it being paid?" done>
+              <SelectField
+                icon={selectedMethod.icon}
+                value={selectedMethod.label}
+                caption={selectedMethod.hint}
+                disabled={busy}
+                onPress={() => setPickingMethod(true)}
+              />
 
               {method === 'payment_received' ? (
                 <Animated.View entering={FadeIn.duration(240)} style={{ gap: space.base }}>
@@ -567,39 +407,13 @@ export default function OnBehalfOrderScreen() {
                         </Text>
                       </View>
 
-                      <View style={{ gap: space.sm }}>
-                        <Text variant="label" tone="secondary">Collected via</Text>
-                        <View style={{ flexDirection: 'row', gap: space.sm, flexWrap: 'wrap' }}>
-                          {RECEIVED_VIA.map(v => {
-                            const active = via === v.value;
-                            return (
-                              <Pressable
-                                key={v.value}
-                                onPress={() => setVia(v.value)}
-                                haptic="light"
-                                pressScale={0.95}
-                                disabled={busy}
-                                accessibilityRole="radio"
-                                accessibilityState={{ selected: active }}
-                                style={{
-                                  paddingHorizontal: space.base, height: 34,
-                                  justifyContent: 'center', borderRadius: radius.full,
-                                  backgroundColor: active ? color.text : color.surface,
-                                  borderWidth: layout.hairlineWidth,
-                                  borderColor: active ? color.text : color.border,
-                                }}
-                              >
-                                <Text variant="caption" style={{
-                                  color: active ? '#fff' : color.textSecondary,
-                                  fontWeight: active ? '700' : '500',
-                                }}>
-                                  {v.label}
-                                </Text>
-                              </Pressable>
-                            );
-                          })}
-                        </View>
-                      </View>
+                      <SelectField
+                        label="Collected via"
+                        value={selectedVia.label}
+                        caption={selectedVia.hint}
+                        disabled={busy}
+                        onPress={() => setPickingVia(true)}
+                      />
 
                       <Input
                         label="Payment reference"
@@ -641,10 +455,16 @@ export default function OnBehalfOrderScreen() {
             gap: space.md,
           }}
         >
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline' }}>
-            <Text variant="callout" tone="tertiary">
-              {lines.length} {lines.length === 1 ? 'line' : 'lines'}
-            </Text>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end' }}>
+            <View style={{ flex: 1 }}>
+              <Text variant="caption" tone="tertiary" numberOfLines={1}>
+                {customer ? customerName(customer) : 'No pharmacy chosen'}
+              </Text>
+              <Text variant="caption" tone="disabled">
+                {lines.length} {lines.length === 1 ? 'line' : 'lines'}
+                {units > 0 ? ` · ${units} ${units === 1 ? 'unit' : 'units'}` : ''}
+              </Text>
+            </View>
             <Text variant="title3">{formatNaira(subtotal)}</Text>
           </View>
 
@@ -660,17 +480,260 @@ export default function OnBehalfOrderScreen() {
           </Button>
         </View>
       </SafeAreaView>
+
+      {/* ── Sheets ── */}
+      <CustomerSheet
+        visible={pickingCustomer}
+        selectedId={customer?.id ?? null}
+        onClose={() => setPickingCustomer(false)}
+        onSelect={chooseCustomer}
+      />
+
+      <ProductSheet
+        visible={pickingProduct}
+        inOrderIds={lines.map(l => l.product.id)}
+        lineCount={lines.length}
+        subtotal={subtotal}
+        onClose={() => setPickingProduct(false)}
+        onSelect={addProduct}
+      />
+
+      <Sheet
+        visible={pickingMethod}
+        onClose={() => setPickingMethod(false)}
+        title="How is it being paid?"
+        subtitle="Pick the option that matches what actually happened."
+      >
+        {METHODS.map((m, i) => (
+          <SheetOption
+            key={m.value}
+            icon={m.icon}
+            label={m.label}
+            hint={m.hint}
+            selected={method === m.value}
+            last={i === METHODS.length - 1}
+            onPress={() => { setMethod(m.value); setPickingMethod(false); }}
+          />
+        ))}
+      </Sheet>
+
+      <Sheet
+        visible={pickingVia}
+        onClose={() => setPickingVia(false)}
+        title="Collected via"
+        subtitle="How the money reached you."
+      >
+        {RECEIVED_VIA.map((v, i) => (
+          <SheetOption
+            key={v.value}
+            label={v.label}
+            hint={v.hint}
+            selected={via === v.value}
+            last={i === RECEIVED_VIA.length - 1}
+            onPress={() => { setVia(v.value); setPickingVia(false); }}
+          />
+        ))}
+      </Sheet>
     </View>
+  );
+}
+
+/* ── Customer sheet ─────────────────────────────────────────────────────────
+   Only APPROVED customers can be ordered for — the API rejects the rest, so
+   the picker never shows them rather than failing at submit.
+   ────────────────────────────────────────────────────────────────────────── */
+
+function CustomerSheet({ visible, selectedId, onClose, onSelect }: {
+  visible: boolean;
+  selectedId: number | null;
+  onClose: () => void;
+  onSelect: (c: AdminCustomer) => void;
+}) {
+  const [search, setSearch] = useState('');
+  const debounced = useDebounced(search, 350);
+
+  // Scoped to the sheet, so the list isn't being fetched and held in memory
+  // behind a form the rep may never open twice.
+  const q = useQuery({
+    queryKey: ['customers', 'approved', debounced],
+    queryFn:  () => listCustomers({ search: debounced, status: 'APPROVED', limit: 25 }),
+    enabled:  visible,
+    staleTime: 30_000,
+  });
+
+  const records = q.data?.records ?? [];
+
+  return (
+    <Sheet
+      visible={visible}
+      onClose={onClose}
+      detent="tall"
+      title="Choose a pharmacy"
+      subtitle="Only approved accounts can be ordered for."
+    >
+      <View style={{ paddingHorizontal: gutter, paddingVertical: space.md }}>
+        <Input
+          placeholder="Search name, contact or email"
+          value={search}
+          onChangeText={setSearch}
+          autoCapitalize="none"
+          autoCorrect={false}
+          returnKeyType="search"
+          leading={<Icon name="search" size={17} color={color.textTertiary} />}
+        />
+      </View>
+
+      <FlatList
+        data={records}
+        keyExtractor={c => String(c.id)}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={{ paddingBottom: space['3xl'] }}
+        renderItem={({ item, index }) => (
+          <SheetOption
+            icon="building"
+            label={customerName(item)}
+            hint={[item.city, item.state].filter(Boolean).join(', ') || item.user.email}
+            selected={selectedId === item.id}
+            last={index === records.length - 1}
+            onPress={() => onSelect(item)}
+          />
+        )}
+        ListEmptyComponent={
+          q.isLoading ? (
+            <View style={{ gap: space.sm, paddingHorizontal: gutter }}>
+              {Array.from({ length: 6 }).map((_, i) => <RowSkeleton key={i} />)}
+            </View>
+          ) : (
+            <View style={{ paddingHorizontal: gutter }}>
+              <EmptyState
+                iconName="search"
+                compact
+                title="No pharmacy found"
+                subtitle={search
+                  ? `Nothing approved matches “${search}”.`
+                  : 'Search by pharmacy name, contact or email.'}
+              />
+            </View>
+          )
+        }
+      />
+    </Sheet>
+  );
+}
+
+/* ── Product sheet ──────────────────────────────────────────────────────── */
+
+function ProductSheet({ visible, inOrderIds, lineCount, subtotal, onClose, onSelect }: {
+  visible: boolean;
+  inOrderIds: number[];
+  lineCount: number;
+  subtotal: number;
+  onClose: () => void;
+  onSelect: (p: CatalogProduct) => void;
+}) {
+  const [search, setSearch] = useState('');
+  const debounced = useDebounced(search, 350);
+
+  const q = useQuery({
+    queryKey: ['catalog', 'products', 'on-behalf', debounced],
+    queryFn:  () => listProducts({ search: debounced, limit: 25 }),
+    enabled:  visible,
+    staleTime: 60_000,
+  });
+
+  const records = q.data?.records ?? [];
+
+  return (
+    <Sheet
+      visible={visible}
+      onClose={onClose}
+      detent="tall"
+      title="Add products"
+      subtitle="Tap to add a line. The sheet stays open for the next one."
+      footer={
+        <Button fullWidth variant={lineCount ? 'primary' : 'secondary'} onPress={onClose}>
+          {lineCount
+            ? `Done · ${lineCount} ${lineCount === 1 ? 'line' : 'lines'} · ${formatNaira(subtotal)}`
+            : 'Done'}
+        </Button>
+      }
+    >
+      <View style={{ paddingHorizontal: gutter, paddingVertical: space.md }}>
+        <Input
+          placeholder="Search brand, generic or SKU"
+          value={search}
+          onChangeText={setSearch}
+          autoCapitalize="none"
+          autoCorrect={false}
+          returnKeyType="search"
+          leading={<Icon name="search" size={17} color={color.textTertiary} />}
+        />
+      </View>
+
+      <FlatList
+        data={records}
+        keyExtractor={p => p.sku}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={{ paddingHorizontal: gutter, gap: space.sm, paddingBottom: space['3xl'] }}
+        renderItem={({ item }) => (
+          <ProductPickRow
+            product={item}
+            inOrder={inOrderIds.includes(item.id)}
+            onPress={() => onSelect(item)}
+          />
+        )}
+        ListEmptyComponent={
+          q.isLoading ? (
+            <View style={{ gap: space.sm }}>
+              {Array.from({ length: 6 }).map((_, i) => <RowSkeleton key={i} />)}
+            </View>
+          ) : (
+            <EmptyState
+              iconName="search"
+              compact
+              title="No products found"
+              subtitle={search ? `Nothing matches “${search}”.` : 'Start typing to search the catalogue.'}
+            />
+          )
+        }
+      />
+    </Sheet>
   );
 }
 
 /* ── Bits ───────────────────────────────────────────────────────────────── */
 
-function Section({ step, title, subtitle, error, children }: {
+function ProductThumb({ uri, size }: { uri?: string | null; size: number }) {
+  return (
+    <View style={{
+      width: size, height: size, borderRadius: radius.md,
+      backgroundColor: color.surfaceSubtle,
+      alignItems: 'center', justifyContent: 'center', overflow: 'hidden',
+    }}>
+      {uri ? (
+        <Image
+          source={{ uri }}
+          style={{ width: '76%', height: '76%' }}
+          contentFit="contain"
+          cachePolicy="memory-disk"
+        />
+      ) : (
+        <Icon name="product" size={Math.round(size * 0.4)} color={color.textDisabled} />
+      )}
+    </View>
+  );
+}
+
+function Section({ step, title, subtitle, error, done = false, trailing, children }: {
   step: string;
   title: string;
   subtitle?: string;
   error?: string;
+  /** Swaps the step number for a tick once the step is satisfied. */
+  done?: boolean;
+  trailing?: string;
   children: React.ReactNode;
 }) {
   return (
@@ -678,15 +741,18 @@ function Section({ step, title, subtitle, error, children }: {
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.sm }}>
         <View style={{
           width: 22, height: 22, borderRadius: radius.full,
-          backgroundColor: error ? color.danger : color.text,
+          backgroundColor: error ? color.danger : done ? color.accent : color.text,
           alignItems: 'center', justifyContent: 'center',
         }}>
-          <Text variant="caption" style={{ color: '#fff', fontSize: 11, fontWeight: '700' }}>{step}</Text>
+          {done && !error
+            ? <Icon name="check" size={12} color="#fff" />
+            : <Text variant="caption" style={{ color: '#fff', fontSize: 11, fontWeight: '700' }}>{step}</Text>}
         </View>
         <View style={{ flex: 1 }}>
           <Text variant="headline">{title}</Text>
           {subtitle ? <Text variant="caption" tone="tertiary">{subtitle}</Text> : null}
         </View>
+        {trailing ? <Badge tone="neutral" size="sm">{trailing}</Badge> : null}
       </View>
 
       {error ? <Text variant="caption" tone="danger">{error}</Text> : null}
@@ -718,22 +784,7 @@ function ProductPickRow({ product, inOrder, onPress }: {
         style={{ opacity: product.in_stock && !unpriced ? 1 : 0.5 }}
       >
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.md }}>
-          <View style={{
-            width: 42, height: 42, borderRadius: radius.md,
-            backgroundColor: color.surfaceSubtle,
-            alignItems: 'center', justifyContent: 'center', overflow: 'hidden',
-          }}>
-            {product.primary_image ? (
-              <Image
-                source={{ uri: product.primary_image }}
-                style={{ width: '76%', height: '76%' }}
-                contentFit="contain"
-                cachePolicy="memory-disk"
-              />
-            ) : (
-              <Icon name="product" size={17} color={color.textDisabled} />
-            )}
-          </View>
+          <ProductThumb uri={product.primary_image} size={42} />
 
           <View style={{ flex: 1, gap: 2 }}>
             <Text variant="bodyMedium" numberOfLines={1}>{product.brand_name}</Text>

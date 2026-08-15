@@ -32,7 +32,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';
 
 import {
-  Text, Button, Input, Pressable, Icon, Surface,
+  Text, Button, Input, Pressable, Icon, Surface, Sheet, SheetOption, SelectField,
 } from '@/components/ui';
 import { ScreenHeader } from '@/components/shared/ScreenHeader';
 import { color, space, radius, gutter, layout } from '@/constants/theme';
@@ -73,12 +73,14 @@ export default function CheckoutScreen() {
   const [po,      setPo]      = useState('');
   const [method,  setMethod]  = useState<PaymentMethod>('paystack');
   const [useCredit, setUseCredit] = useState(false);
+  const [pickingMethod, setPickingMethod] = useState(false);
 
   const [phase,  setPhase]  = useState<Phase>('idle');
   const [errs,   setErrs]   = useState<Record<string, string>>({});
   const [stranded, setStranded] = useState<string | null>(null);
 
   const busy = phase !== 'idle';
+  const selectedMethod = METHODS.find(m => m.value === method)!;
 
   // Only in-stock lines are ordered. The basket screen blocks checkout when
   // nothing is orderable, so this can't be empty by the time we're here.
@@ -390,58 +392,16 @@ export default function CheckoutScreen() {
                 </Pressable>
               ) : null}
 
-              <View style={{ gap: space.sm }}>
-                {METHODS.map(m => {
-                  const active = method === m.value;
-                  return (
-                    <Pressable
-                      key={m.value}
-                      onPress={() => setMethod(m.value)}
-                      disabled={busy}
-                      haptic="light"
-                      pressScale={0.98}
-                      accessibilityRole="radio"
-                      accessibilityState={{ selected: active, disabled: busy }}
-                      style={{
-                        flexDirection: 'row', alignItems: 'center', gap: space.md,
-                        padding: space.base,
-                        borderRadius: radius.lg,
-                        backgroundColor: active ? color.brandSoft : color.surface,
-                        borderWidth: active ? 1.5 : layout.hairlineWidth,
-                        borderColor: active ? color.brand : color.border,
-                      }}
-                    >
-                      <View style={{
-                        width: 36, height: 36, borderRadius: radius.full,
-                        backgroundColor: active ? color.brand : color.surfaceMuted,
-                        alignItems: 'center', justifyContent: 'center',
-                      }}>
-                        <Icon
-                          name={m.icon}
-                          size={16}
-                          color={active ? '#fff' : color.textTertiary}
-                          filled={active}
-                        />
-                      </View>
-
-                      <View style={{ flex: 1 }}>
-                        <Text variant="bodyMedium">{m.label}</Text>
-                        <Text variant="caption" tone="tertiary">{m.hint}</Text>
-                      </View>
-
-                      <View style={{
-                        width: 20, height: 20, borderRadius: radius.full,
-                        borderWidth: active ? 0 : 1.5,
-                        borderColor: color.borderStrong,
-                        backgroundColor: active ? color.brand : 'transparent',
-                        alignItems: 'center', justifyContent: 'center',
-                      }}>
-                        {active ? <Icon name="check" size={11} color="#fff" /> : null}
-                      </View>
-                    </Pressable>
-                  );
-                })}
-              </View>
+              {/* One row instead of three stacked cards. Checkout is where
+                  scroll length hurts most — every extra screen between the
+                  basket and the pay button is a chance to abandon. */}
+              <SelectField
+                icon={selectedMethod.icon}
+                value={selectedMethod.label}
+                caption={selectedMethod.hint}
+                disabled={busy}
+                onPress={() => setPickingMethod(true)}
+              />
             </Section>
 
             {/* ── Summary ── */}
@@ -532,6 +492,24 @@ export default function CheckoutScreen() {
           </Text>
         </View>
       </SafeAreaView>
+
+      <Sheet
+        visible={pickingMethod}
+        onClose={() => setPickingMethod(false)}
+        title="How would you like to pay?"
+      >
+        {METHODS.map((m, i) => (
+          <SheetOption
+            key={m.value}
+            icon={m.icon}
+            label={m.label}
+            hint={m.hint}
+            selected={method === m.value}
+            last={i === METHODS.length - 1}
+            onPress={() => { setMethod(m.value); setPickingMethod(false); }}
+          />
+        ))}
+      </Sheet>
     </View>
   );
 }
@@ -539,8 +517,7 @@ export default function CheckoutScreen() {
 /* ── Section ────────────────────────────────────────────────────────────── */
 
 function Section({
-  index, step, title, subtitle, children,
-}: {
+  index, step, title, subtitle, children }: {
   index: number;
   step: string;
   title: string;

@@ -18,17 +18,17 @@
  */
 
 import React, { useCallback, useMemo, useState } from 'react';
-import { View, RefreshControl, Alert } from 'react-native';
+import { View, ScrollView, RefreshControl, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
 import Animated, {
-  FadeIn, FadeInDown, useSharedValue, useAnimatedScrollHandler,
+  FadeInDown, useSharedValue, useAnimatedScrollHandler,
 } from 'react-native-reanimated';
 
 import {
   Text, Button, Input, Pressable, Icon, Surface, Badge, StatusBadge,
-  EmptyState, RowSkeleton,
+  EmptyState, RowSkeleton, Sheet, SheetOption,
 } from '@/components/ui';
 import { ScreenHeader } from '@/components/shared/ScreenHeader';
 import { color, space, radius, gutter, layout } from '@/constants/theme';
@@ -117,6 +117,19 @@ export default function DeliveriesScreen() {
 
   const total    = deliveriesQ.data?.pages[0]?.pagination.total ?? 0;
   const filtered = !!search || !!status;
+
+  /** The delivery the assignment sheet is currently acting on. */
+  const assigningDelivery = useMemo(
+    () => (assigning === null ? null : deliveries.find(d => d.id === assigning) ?? null),
+    [assigning, deliveries],
+  );
+
+  // A driver with no driver record can't be assigned — the API keys assignment
+  // on the driver table, not the user.
+  const assignableDrivers = useMemo(
+    () => (driversQ.data?.records ?? []).filter(d => d.driver_record_id !== null),
+    [driversQ.data],
+  );
 
   const invalidate = useCallback(async () => {
     await queryClient.invalidateQueries({ queryKey: ['deliveries'] });
@@ -275,11 +288,7 @@ export default function DeliveriesScreen() {
               delivery={item}
               index={index}
               busy={busyId === item.id}
-              assigning={assigning === item.id}
-              drivers={driversQ.data?.records ?? []}
-              driversLoading={driversQ.isLoading}
-              onToggleAssign={() => setAssigning(a => (a === item.id ? null : item.id))}
-              onPickDriver={driverRecordId => void assignDriver(item.id, driverRecordId)}
+              onToggleAssign={() => setAssigning(item.id)}
               onAdvance={next =>
                 next === 'DELIVERED' ? completeDelivery(item) : void move(item, next)}
               onFail={() => markFailed(item)}
@@ -319,6 +328,66 @@ export default function DeliveriesScreen() {
           ListFooterComponent={deliveriesQ.isFetchingNextPage ? <RowSkeleton /> : null}
         />
       </SafeAreaView>
+
+      {/* One picker at screen level rather than one expanding inside each card.
+          Expanding in place pushed every card below it down and made the list
+          jump under the dispatcher's thumb — the longer the driver roster, the
+          worse it got. */}
+      <Sheet
+        visible={assigning !== null}
+        onClose={() => setAssigning(null)}
+        title="Assign a driver"
+        subtitle={assigningDelivery?.order?.order_number ?? undefined}
+      >
+        {driversQ.isLoading ? (
+          <View style={{ gap: space.sm, paddingHorizontal: gutter, paddingVertical: space.md }}>
+            {Array.from({ length: 4 }).map((_, i) => <RowSkeleton key={i} />)}
+          </View>
+        ) : assignableDrivers.length === 0 ? (
+          <View style={{ paddingHorizontal: gutter }}>
+            <EmptyState
+              iconName="team"
+              compact
+              title="No drivers available"
+              subtitle="Add a driver from Team before assigning deliveries."
+            />
+          </View>
+        ) : (
+          <ScrollView keyboardShouldPersistTaps="handled">
+            {assignableDrivers.map((d, i) => (
+              <SheetOption
+                key={d.id}
+                icon="truck"
+                label={`${d.first_name} ${d.last_name}`}
+                hint={d.vehicle_plate ?? 'No vehicle on file'}
+                selected={assigningDelivery?.driver?.id === d.driver_record_id}
+                last={i === assignableDrivers.length - 1 && !assigningDelivery?.driver}
+                onPress={() => {
+                  if (assigning !== null) void assignDriver(assigning, d.driver_record_id);
+                }}
+              />
+            ))}
+
+            {assigningDelivery?.driver ? (
+              <Pressable
+                onPress={() => { if (assigning !== null) void assignDriver(assigning, null); }}
+                haptic="warning"
+                pressOpacity={0.6}
+                pressScale={1}
+                accessibilityRole="button"
+                style={{
+                  paddingHorizontal: gutter,
+                  paddingVertical: space.base,
+                  minHeight: layout.tapTarget,
+                  justifyContent: 'center',
+                }}
+              >
+                <Text variant="label" tone="danger">Unassign this driver</Text>
+              </Pressable>
+            ) : null}
+          </ScrollView>
+        )}
+      </Sheet>
     </View>
   );
 }
@@ -326,17 +395,11 @@ export default function DeliveriesScreen() {
 /* ── Card ───────────────────────────────────────────────────────────────── */
 
 function DeliveryCard({
-  delivery, index, busy, assigning, drivers, driversLoading,
-  onToggleAssign, onPickDriver, onAdvance, onFail, onOpenOrder,
-}: {
+  delivery, index, busy, onToggleAssign, onAdvance, onFail, onOpenOrder }: {
   delivery: AdminDelivery;
   index: number;
   busy: boolean;
-  assigning: boolean;
-  drivers: { id: number; first_name: string; last_name: string; phone: string | null; driver_record_id: number | null; vehicle_plate: string | null }[];
-  driversLoading: boolean;
   onToggleAssign: () => void;
-  onPickDriver: (driverRecordId: number | null) => void;
   onAdvance: (next: DeliveryStatus) => void;
   onFail: () => void;
   onOpenOrder: () => void;
@@ -447,69 +510,11 @@ function DeliveryCard({
             {isLive ? (
               <Pressable onPress={onToggleAssign} haptic="light" pressOpacity={0.6} hitSlop={8} disabled={busy}>
                 <Text variant="label" tone="brand">
-                  {assigning ? 'Close' : delivery.driver ? 'Change' : 'Assign'}
+                  {delivery.driver ? 'Change' : 'Assign'}
                 </Text>
               </Pressable>
             ) : null}
           </View>
-
-          {/* Driver picker */}
-          {assigning ? (
-            <Animated.View entering={FadeIn.duration(220)} style={{ gap: space.xs }}>
-              <View style={{ height: layout.hairlineWidth, backgroundColor: color.borderSubtle }} />
-
-              {driversLoading ? (
-                <RowSkeleton />
-              ) : drivers.length === 0 ? (
-                <Text variant="caption" tone="tertiary" style={{ paddingVertical: space.md }}>
-                  No drivers on the team yet. Add one from Team.
-                </Text>
-              ) : (
-                <>
-                  {drivers
-                    // A driver with no driver record can't be assigned — the
-                    // API keys assignment on the driver table, not the user.
-                    .filter(d => d.driver_record_id !== null)
-                    .map(d => {
-                      const active = delivery.driver?.id === d.driver_record_id;
-                      return (
-                        <Pressable
-                          key={d.id}
-                          onPress={() => onPickDriver(d.driver_record_id)}
-                          haptic="light"
-                          pressOpacity={0.6}
-                          disabled={busy}
-                          style={{
-                            flexDirection: 'row', alignItems: 'center', gap: space.md,
-                            paddingVertical: space.md, minHeight: layout.tapTarget,
-                          }}
-                        >
-                          <View style={{ flex: 1 }}>
-                            <Text variant="body">{d.first_name} {d.last_name}</Text>
-                            <Text variant="caption" tone="tertiary">
-                              {d.vehicle_plate ?? 'No vehicle on file'}
-                            </Text>
-                          </View>
-                          {active ? <Icon name="check" size={16} color={color.brand} /> : null}
-                        </Pressable>
-                      );
-                    })}
-
-                  {delivery.driver ? (
-                    <Pressable
-                      onPress={() => onPickDriver(null)}
-                      haptic="light"
-                      pressOpacity={0.6}
-                      disabled={busy}
-                      style={{ paddingVertical: space.md }}
-                    >
-                      <Text variant="label" tone="danger">Unassign</Text>
-                    </Pressable>
-                  ) : null}
-                </>
-              )}
-            </Animated.View>
-          ) : null}
 
           {/* Actions */}
           {isLive ? (

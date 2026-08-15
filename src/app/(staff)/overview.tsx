@@ -14,7 +14,7 @@
  */
 
 import React, { useMemo, useState } from 'react';
-import { View, ScrollView, RefreshControl } from 'react-native';
+import { View, RefreshControl } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { useQuery } from '@tanstack/react-query';
@@ -23,7 +23,7 @@ import Animated, {
 } from 'react-native-reanimated';
 
 import {
-  Text, Pressable, Icon, Surface, Badge, Skeleton, EmptyState,
+  Text, Pressable, Icon, Surface, Skeleton, EmptyState,
 } from '@/components/ui';
 import { ScreenHeader } from '@/components/shared/ScreenHeader';
 import { StatTile } from '@/components/admin/StatTile';
@@ -33,7 +33,8 @@ import { formatNaira } from '@/lib/format';
 import { useRefresh } from '@/hooks/use-refresh';
 import { useAuth } from '@/contexts/AuthContext';
 import { getReportSummary, listCustomers, AWAITING_REVIEW } from '@/lib/services/admin.service';
-import { getUnreadCount } from '@/lib/services/account.service';
+import { useUnreadCount } from '@/hooks/use-unread-count';
+import { NotificationBell } from '@/components/shared/NotificationBell';
 import type { IconName } from '@/components/ui/Icon';
 
 const PERIODS = [
@@ -66,16 +67,11 @@ export default function OverviewScreen() {
     staleTime: 30_000,
   });
 
-  const unreadQ = useQuery({
-    queryKey: ['notifications', 'unread-count'],
-    queryFn:  getUnreadCount,
-    staleTime: 30_000,
-  });
+  const { unread, refetch: refetchUnread } = useUnreadCount();
 
   const s        = summaryQ.data;
   const loading  = summaryQ.isLoading;
   const pending  = pendingQ.data?.pagination.total ?? 0;
-  const unread   = unreadQ.data?.unread_count ?? 0;
   const isAdmin  = user?.role === 'ADMIN';
 
   const inFlight = useMemo(() => {
@@ -86,7 +82,7 @@ export default function OverviewScreen() {
   }, [s]);
 
 
-  const { refreshing, onRefresh } = useRefresh(summaryQ.refetch, pendingQ.refetch, unreadQ.refetch);
+  const { refreshing, onRefresh } = useRefresh(summaryQ.refetch, pendingQ.refetch, refetchUnread);
 
   return (
     <View style={{ flex: 1, backgroundColor: color.bg }}>
@@ -101,36 +97,10 @@ export default function OverviewScreen() {
           }
           scrollY={scrollY}
           right={
-            <Pressable
+            <NotificationBell
+              count={unread}
               onPress={() => router.push('/(staff)/notifications' as never)}
-              haptic="light"
-              pressScale={0.92}
-              accessibilityRole="button"
-              accessibilityLabel={unread > 0 ? `Notifications, ${unread} unread` : 'Notifications'}
-              style={{
-                width: 40, height: 40, borderRadius: radius.full,
-                backgroundColor: color.surface,
-                borderWidth: layout.hairlineWidth,
-                borderColor: color.border,
-                alignItems: 'center', justifyContent: 'center',
-              }}
-            >
-              <Icon name="notifications" size={18} color={color.text} />
-              {unread > 0 ? (
-                <View style={{
-                  position: 'absolute', top: -2, right: -2,
-                  minWidth: 18, height: 18, paddingHorizontal: 4,
-                  borderRadius: radius.full,
-                  backgroundColor: color.danger,
-                  borderWidth: 2, borderColor: color.bg,
-                  alignItems: 'center', justifyContent: 'center',
-                }}>
-                  <Text variant="caption" style={{ color: '#fff', fontSize: 9, fontWeight: '800' }}>
-                    {unread > 99 ? '99+' : unread}
-                  </Text>
-                </View>
-              ) : null}
-            </Pressable>
+            />
           }
         />
 

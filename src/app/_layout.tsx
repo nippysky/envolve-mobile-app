@@ -1,7 +1,8 @@
 import React, { useEffect } from 'react';
+import { AppState, type AppStateStatus } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import * as SplashScreen from 'expo-splash-screen';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryClient, QueryClientProvider, focusManager } from '@tanstack/react-query';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { Stack } from 'expo-router';
@@ -23,7 +24,25 @@ const queryClient = new QueryClient({
   },
 });
 
+/**
+ * React Query's "window focus" concept has no meaning in React Native until
+ * it's told what focus is. Without this the global `refetchOnWindowFocus`
+ * setting is inert, so anything a query opted into — the unread badge, most
+ * obviously — went stale the moment the app was backgrounded and stayed stale
+ * until the screen remounted.
+ */
+function useAppStateFocus() {
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (status: AppStateStatus) => {
+      focusManager.setFocused(status === 'active');
+    });
+    return () => sub.remove();
+  }, []);
+}
+
 export default function RootLayout() {
+  useAppStateFocus();
+
   // Hide splash on first render — app is ready
   useEffect(() => {
     SplashScreen.hideAsync().catch(() => {});
