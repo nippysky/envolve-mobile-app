@@ -7,11 +7,9 @@
     "icon": "./assets/images/icon.png",
     "scheme": "envolvecareplus",
     "userInterfaceStyle": "light",
-
     "runtimeVersion": {
       "policy": "appVersion"
     },
-
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "com.envolvepharma.envolvecareplus",
@@ -24,7 +22,6 @@
         "ITSAppUsesNonExemptEncryption": false
       }
     },
-
     "android": {
       "package": "com.envolvepharma.envolvecareplus",
       "adaptiveIcon": {
@@ -48,12 +45,10 @@
       ],
       "predictiveBackGestureEnabled": false
     },
-
     "web": {
       "output": "static",
       "favicon": "./assets/images/favicon.png"
     },
-
     "plugins": [
       "expo-router",
       [
@@ -70,25 +65,22 @@
           "imageWidth": 200,
           "resizeMode": "contain"
         }
-      ]
+      ],
+      "expo-image"
     ],
-
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
     },
-
     "updates": {
       "url": "https://u.expo.dev/859a57dc-55ec-432c-a774-07f07495da25"
     },
-
     "extra": {
       "router": {},
       "eas": {
         "projectId": "859a57dc-55ec-432c-a774-07f07495da25"
       }
     },
-
     "owner": "nippysky"
   }
 }
