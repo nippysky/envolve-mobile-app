@@ -37,7 +37,7 @@ export default function AccountScreen() {
   const router = useRouter();
   const { user, logout } = useAuth();
 
-  const { data, isLoading, refetch, isRefetching } = useQuery({
+  const { data, isLoading, refetch } = useQuery({
     queryKey: ['account', 'me'],
     queryFn:  getMyAccount,
     staleTime: 60_000,

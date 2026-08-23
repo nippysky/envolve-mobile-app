@@ -1,10 +1,9 @@
 /**
  * Console overview.
  *
- * `/api/reports/summary` already scopes itself by role — a staff member gets
- * figures filtered through their assigned customers, an admin gets the
- * platform. The response carries `scope` so this screen can say which it's
- * showing rather than leaving a rep to wonder whose revenue they're looking at.
+ * `/api/reports/summary` scopes itself to the signed-in rep's assigned
+ * customers. The response carries `scope` so this screen can say so, rather
+ * than leaving a rep to wonder whose revenue they're looking at.
  *
  * The action strip below the KPIs is the point of the screen. Someone opening
  * the console on a phone is almost always doing one of three things: placing an
@@ -72,7 +71,6 @@ export default function OverviewScreen() {
   const s        = summaryQ.data;
   const loading  = summaryQ.isLoading;
   const pending  = pendingQ.data?.pagination.total ?? 0;
-  const isAdmin  = user?.role === 'ADMIN';
 
   const inFlight = useMemo(() => {
     if (!s) return 0;
@@ -97,10 +95,29 @@ export default function OverviewScreen() {
           }
           scrollY={scrollY}
           right={
-            <NotificationBell
-              count={unread}
-              onPress={() => router.push('/(staff)/notifications' as never)}
-            />
+            <View style={{ flexDirection: 'row', gap: space.sm }}>
+              <Pressable
+                onPress={() => router.push('/(staff)/search' as never)}
+                haptic="light"
+                pressScale={0.92}
+                accessibilityRole="button"
+                accessibilityLabel="Search"
+                style={{
+                  width: 40, height: 40, borderRadius: radius.full,
+                  backgroundColor: color.surface,
+                  borderWidth: layout.hairlineWidth,
+                  borderColor: color.border,
+                  alignItems: 'center', justifyContent: 'center',
+                }}
+              >
+                <Icon name="search" size={18} color={color.text} />
+              </Pressable>
+
+              <NotificationBell
+                count={unread}
+                onPress={() => router.push('/(staff)/notifications' as never)}
+              />
+            </View>
           }
         />
 
@@ -296,16 +313,16 @@ export default function OverviewScreen() {
                 </Animated.View>
               ) : null}
 
-              {isAdmin ? (
-                <Pressable
-                  onPress={() => router.push('/(staff)/reports' as never)}
-                  haptic="light"
-                  pressOpacity={0.6}
-                  style={{ alignItems: 'center', paddingVertical: space.md }}
-                >
-                  <Text variant="label" tone="brand">See the full report</Text>
-                </Pressable>
-              ) : null}
+              {/* Reports is a staff screen too — this link was admin-gated only
+                  because the report used to be platform-wide. */}
+              <Pressable
+                onPress={() => router.push('/(staff)/reports' as never)}
+                haptic="light"
+                pressOpacity={0.6}
+                style={{ alignItems: 'center', paddingVertical: space.md }}
+              >
+                <Text variant="label" tone="brand">See the full report</Text>
+              </Pressable>
             </>
           )}
         </Animated.ScrollView>

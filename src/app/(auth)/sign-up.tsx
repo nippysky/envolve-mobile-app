@@ -15,8 +15,8 @@
  * emails; the same guard applies here.
  */
 
-import React, { useCallback, useMemo, useRef, useState } from 'react';
-import { View, ScrollView, type TextInput } from 'react-native';
+import React, { useCallback, useMemo, useState } from 'react';
+import { View, ScrollView } from 'react-native';
 import { useRouter } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
 import Animated, {

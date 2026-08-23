@@ -24,6 +24,30 @@ import { API_BASE, MOBILE_HEADERS }  from '@/constants/api';
 
 export type UserRole = 'ADMIN' | 'STAFF' | 'DRIVER' | 'CUSTOMER' | 'SUPER_ADMIN';
 
+/**
+ * Roles that may not use the mobile app.
+ *
+ * The app is for pharmacies, sales staff and drivers. Administration —
+ * settings, the team roster, the audit trail, catalogue management — lives in
+ * the web console, and an admin signing in here would previously have landed
+ * in a console that no longer carries any of it.
+ *
+ * This is a product decision, not a security boundary. The API still authorises
+ * every request by role, so the worst an admin could do by defeating this check
+ * is see the staff screens their token already permits. The check exists so
+ * they get a clear explanation instead of a half-empty console.
+ */
+const APP_BLOCKED_ROLES: readonly UserRole[] = ['ADMIN', 'SUPER_ADMIN'];
+
+export function isAppBlockedRole(role: string | null | undefined): boolean {
+  if (!role) return false;
+  return (APP_BLOCKED_ROLES as readonly string[]).includes(role.toUpperCase());
+}
+
+const BLOCKED_MESSAGE =
+  'Administrator accounts sign in on the web console, not the mobile app. '
+  + 'Use a staff account here.';
+
 export interface AppUser {
   id:         number;
   first_name: string;
@@ -114,7 +138,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       try {
         const saved = await TokenStorage.getUser<AppUser>();
         const token = await TokenStorage.getAccess();
-        if (saved && token) {
+
+        // An admin who signed in on a previous build still has a valid stored
+        // session. Without this they'd be restored straight past the login
+        // gate on upgrade, which is the one way the block could be bypassed.
+        if (saved && isAppBlockedRole(saved.role)) {
+          await TokenStorage.clear();
+        } else if (saved && token) {
           // Quick verify — if the token is stale, api-client will refresh it
           setUser(saved);
         }
@@ -133,19 +163,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     access:  string,
     refresh: string,
   ) => {
+    // Checked before anything is persisted, so a rejected admin leaves no
+    // tokens behind for the session-restore path to pick up.
+    if (isAppBlockedRole(appUser.role)) {
+      await TokenStorage.clear();
+      throw new Error(BLOCKED_MESSAGE);
+    }
+
     await TokenStorage.saveTokens(access, refresh);
     await TokenStorage.saveUser(appUser);
     setUser(appUser);
 
     // Navigate to the correct role stack
-    const home: Record<UserRole, string> = {
-      CUSTOMER:    '/(customer)/catalog',
-      ADMIN:       '/(staff)/overview',
-      STAFF:       '/(staff)/overview',
-      SUPER_ADMIN: '/(staff)/overview',
-      DRIVER:      '/(driver)/deliveries',
+    const home: Partial<Record<UserRole, string>> = {
+      CUSTOMER: '/(customer)/catalog',
+      STAFF:    '/(staff)/overview',
+      DRIVER:   '/(driver)/deliveries',
     };
-    router.replace(home[appUser.role] as any);
+    router.replace((home[appUser.role] ?? '/(auth)/sign-in') as any);
   }, []);
 
   const signIn = useCallback(

@@ -24,7 +24,7 @@ import Animated, { FadeIn, FadeInDown, ZoomIn } from 'react-native-reanimated';
 import { Text } from './Text';
 import { Button } from './Button';
 import { Icon, type IconName } from './Icon';
-import { color, space, radius, gutter } from '@/constants/theme';
+import { color, space, gutter } from '@/constants/theme';
 
 export interface EmptyStateProps {
   iconName?:    IconName;

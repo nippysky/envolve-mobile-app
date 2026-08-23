@@ -20,8 +20,9 @@ import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '@/contexts/AuthContext';
 import { getUnreadCount } from '@/lib/services/account.service';
 
-/** Shared key, so marking notifications read can invalidate every consumer. */
-export const UNREAD_COUNT_KEY = ['notifications', 'unread-count'] as const;
+// Nested under ['notifications'] so marking messages read — which invalidates
+// that prefix — refreshes the badge without needing to know this key exists.
+const UNREAD_COUNT_KEY = ['notifications', 'unread-count'] as const;
 
 export function useUnreadCount() {
   const { user } = useAuth();

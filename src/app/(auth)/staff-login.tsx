@@ -1,5 +1,5 @@
 /**
- * Staff, admin and driver sign-in.
+ * Staff and driver sign-in.
  *
  * One endpoint for all three internal roles — POST /api/auth/staff/login. The
  * role comes back on the user object and AuthContext routes accordingly, so
@@ -56,8 +56,8 @@ export default function StaffLoginScreen() {
         return;
       }
 
-      // signIn routes by role — admin/staff to the console, drivers to their
-      // assignments. Left locked until this screen unmounts.
+      // signIn routes by role — staff to the console, drivers to their
+      // assignments. Admin roles are rejected there, not here.
       await signIn(res.user, res.tokens);
     } catch (err) {
       const e2 = err as Error & { status?: number };
@@ -74,7 +74,7 @@ export default function StaffLoginScreen() {
     <AuthScreen
       eyebrow="Operations"
       title="Staff sign in"
-      subtitle="For team members and drivers. Access is scoped to your role automatically."
+      subtitle="For sales staff and drivers. Administrators sign in on the web console."
       footer={
         <Pressable
           onPress={() => router.replace('/(auth)/customer-login')}

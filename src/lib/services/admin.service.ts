@@ -250,19 +250,6 @@ export function reviewCustomer(id: number, input: {
   });
 }
 
-/**
- * Assign a sales rep. ADMIN only.
- *
- * The body key is `staff_user_id` — the *user* id, not a staff-table id. Pass
- * null to unassign.
- */
-export function assignStaff(customerId: number, staffUserId: number | null) {
-  return apiFetch<{ id: number }>(`/api/customers/${customerId}/assign-staff`, {
-    method: 'PATCH',
-    body:   JSON.stringify({ staff_user_id: staffUserId }),
-  });
-}
-
 export interface PcnCertificate {
   /** The original file, exactly as stored. Empty string when unavailable. */
   url:         string;
@@ -378,29 +365,9 @@ export function getAdminProduct(sku: string) {
   return apiFetch<{ product: AdminProduct }>(`/api/products/${encodeURIComponent(sku)}`);
 }
 
-/** ADMIN only — staff have read access to products but cannot write. */
-export function updateProduct(sku: string, patch: Partial<{
-  brand_name: string; generic_name: string; product_strength: string;
-  pack_size: string; minimum_order: number; selling_price: number;
-  minimum_stock_level: number; reorder_quantity: number;
-  shelf_location: string; status: ProductStatus;
-  category_id: number; manufacturer_id: number;
-}>) {
-  return apiFetch<{ product: AdminProduct }>(`/api/products/${encodeURIComponent(sku)}`, {
-    method: 'PATCH',
-    body:   JSON.stringify(patch),
-  });
-}
-
 export function listCategories() {
   return apiFetch<{ categories: { id: number; name: string; product_count?: number }[] }>(
     '/api/products/categories',
-  );
-}
-
-export function listManufacturers() {
-  return apiFetch<{ manufacturers: { id: number; name: string }[] }>(
-    '/api/products/manufacturers',
   );
 }
 
@@ -456,13 +423,47 @@ export function adjustStock(input: {
   });
 }
 
+/**
+ * Receive a new batch into stock.
+ *
+ * Distinct from `adjustStock`, which corrects a batch that already exists.
+ * This creates the batch, writes an IN stock movement and updates the
+ * product's last cost price, all in one server-side transaction.
+ *
+ * `batch_number` is unique platform-wide — a duplicate comes back as a 409,
+ * which the caller should surface as "that batch number is already in use"
+ * rather than a generic failure.
+ */
 export function receiveStock(input: {
-  product_id: number; batch_number: string; quantity: number;
-  cost_price: number; expiry_date?: string;
+  product_id:   number;
+  batch_number: string;
+  quantity:     number;
+  cost_price:   number;
+  /** ISO `YYYY-MM-DD`. Omit for stock that doesn't expire. */
+  expiry_date?: string;
+  notes?:       string;
 }) {
-  return apiFetch<{ id: number }>('/api/inventory/receive', {
-    method: 'POST',
-    body:   JSON.stringify(input),
+  return apiFetch<{ batch: { id: number; batch_number: string; quantity: number } }>(
+    '/api/inventory/receive',
+    { method: 'POST', body: JSON.stringify(input) },
+  );
+}
+
+/**
+ * Correct a batch's details.
+ *
+ * Quantity is deliberately not patchable here — stock levels move through
+ * `adjustStock` so every change leaves a reason and a stock movement behind.
+ * Pass `expiry_date: null` to clear an expiry that was entered by mistake.
+ */
+export function updateBatch(id: number, patch: {
+  batch_number?: string;
+  cost_price?:   number;
+  expiry_date?:  string | null;
+}) {
+  return apiFetch<InventoryBatch>(`/api/inventory/batches/${id}`, {
+    method: 'PATCH',
+    body:   JSON.stringify(patch),
   });
 }
 
@@ -567,107 +568,6 @@ export function listStaff(opts: {
     search: opts.search, role: opts.role, status: opts.status })}`);
 }
 
-export function createStaff(input: {
-  first_name: string; last_name: string; email: string;
-  middle_name?: string; phone?: string; gender?: string;
-  department?: string; job_title?: string;
-  role?: 'STAFF' | 'DRIVER';
-  vehicle_plate?: string; vehicle_type?: string; region?: string;
-}) {
-  return apiFetch<{ id: number; email: string }>('/api/staff', {
-    method: 'POST',
-    body:   JSON.stringify(input),
-  });
-}
-
-export function updateStaff(id: number, patch: Partial<{
-  first_name: string; last_name: string; phone: string;
-  department: string; job_title: string; status: string;
-  vehicle_plate: string; vehicle_type: string; region: string;
-}>) {
-  return apiFetch<{ id: number }>(`/api/staff/${id}`, {
-    method: 'PATCH',
-    body:   JSON.stringify(patch),
-  });
-}
-
-export function resendStaffInvite(id: number) {
-  return apiFetch<{ sent: boolean }>(`/api/staff/${id}/resend-invite`, { method: 'POST' });
-}
-
-/* ══ Settings ══════════════════════════════════════════════════════════════ */
-
-/**
- * Settings are stored as strings in `app_settings` and returned as strings.
- * Booleans arrive as `'true'` / `'false'`; parse at the edge, don't trust
- * truthiness — the string `'false'` is truthy.
- */
-export interface AppSettings {
-  company_name?:        string;
-  company_email?:       string;
-  company_phone?:       string;
-  hq_address?:          string;
-  currency?:            string;
-  timezone?:            string;
-  email_audit_summary?: string;
-  auto_logout?:         string;
-  vat_enabled?:         string;
-  vat_rate?:            string;
-  /** All referral values are naira — they feed one wallet. */
-  referral_signup_bonus?:       string;
-  referral_threshold?:          string;
-  referral_reward?:             string;
-  /** 'true' lets customers spend their balance at checkout. Off by default. */
-  referral_redemption_enabled?: string;
-  referral_min_redemption?:     string;
-  staff_order_scope?:           string;
-}
-
-/** Returns the settings map directly as `data` — not wrapped in `{ settings }`. */
-export function getSettings() {
-  return apiFetch<AppSettings>('/api/admin/settings');
-}
-
-/**
- * Keys outside the server's allow-list are silently dropped, so the response
- * echoes back the keys it actually wrote. Compare against what you sent rather
- * than assuming a 200 means everything landed.
- */
-export function updateSettings(patch: AppSettings) {
-  return apiFetch<{ updated: string[] }>('/api/admin/settings', {
-    method: 'PATCH',
-    body:   JSON.stringify(patch),
-  });
-}
-
-/* ══ Audit ═════════════════════════════════════════════════════════════════ */
-
-export interface AuditLogEntry {
-  id:          number;
-  user_id:     number | null;
-  user_type:   string | null;
-  user_name:   string | null;
-  email:       string | null;
-  action:      string;
-  entity_type: string | null;
-  entity_id:   string | null;
-  description: string | null;
-  ip_address:  string | null;
-  user_agent:  string | null;
-  created_at:  string;
-}
-
-export function listAuditLogs(opts: {
-  page?: number; limit?: number; search?: string;
-  action?: string | null; user_type?: string | null;
-  entity_type?: string | null; from?: string | null; to?: string | null;
-} = {}) {
-  return apiFetch<Paginated<AuditLogEntry>>(`/api/admin/audit-logs?${qs({
-    page: opts.page ?? 1, limit: opts.limit ?? 25,
-    search: opts.search, action: opts.action, user_type: opts.user_type,
-    entity_type: opts.entity_type, from: opts.from, to: opts.to })}`);
-}
-
 /* ══ Search ════════════════════════════════════════════════════════════════ */
 
 export interface SearchResults {
@@ -686,7 +586,13 @@ export interface SearchResults {
   }[];
 }
 
-/** Server-side cached for 10s and capped per entity type — not paginated. */
+/**
+ * One query across products, customers and orders.
+ *
+ * The API rejects anything under two characters with a 400, so callers must
+ * gate on length rather than firing on every keystroke — otherwise the first
+ * letter typed produces an error toast.
+ */
 export function globalSearch(query: string) {
   return apiFetch<SearchResults>(`/api/search?${qs({ q: query })}`);
 }

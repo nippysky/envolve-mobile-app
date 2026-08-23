@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 /**
  * Pull-to-refresh state that only reflects an actual pull.
@@ -31,15 +31,23 @@ import { useCallback, useRef, useState } from 'react';
  * quietly, which is the point of a background refetch.
  */
 export function useRefresh(
-  ...refetchers: Array<() => Promise<unknown>>
+  ...refetchers: (() => Promise<unknown>)[]
 ): { refreshing: boolean; onRefresh: () => void } {
   const [refreshing, setRefreshing] = useState(false);
 
   // Held in a ref so `onRefresh` keeps a stable identity. A refetch function
   // from react-query is a new closure on most renders, and a handler that
   // changed every render would make `RefreshControl` remount mid-gesture.
+  //
+  // The assignment lives in an effect rather than in the render body. Writing
+  // to a ref during render is what `react-hooks/refs` forbids, and the reason
+  // is real: with concurrent rendering a render can be thrown away, so a
+  // render-phase write can persist from work that was never committed. An
+  // effect only runs on committed renders. Nothing reads this ref during
+  // render — `onRefresh` fires from a gesture — so a one-commit lag is
+  // invisible here.
   const latest = useRef(refetchers);
-  latest.current = refetchers;
+  useEffect(() => { latest.current = refetchers; });
 
   // Guards against a second pull landing while the first is still in flight,
   // which would clear `refreshing` early and strand the spinner again.

@@ -1,14 +1,13 @@
 /**
  * More — the console's secondary hub.
  *
- * Everything that doesn't earn a permanent tab: inventory, deliveries, team,
- * reports, settings, audit. Each row carries live context rather than just a
- * label — low-stock count, unassigned deliveries — so the hub answers "does
- * anything need me?" without being opened one screen at a time.
+ * Everything that doesn't earn a permanent tab: deliveries, inventory,
+ * products, reports. Each row carries live context rather than just a label —
+ * low-stock count, unassigned deliveries — so the hub answers "does anything
+ * need me?" without being opened one screen at a time.
  *
- * ADMIN-only destinations are hidden rather than disabled. A greyed-out
- * Settings row tells a staff member the app has settings and they can't have
- * them, which is a worse experience than it simply not being their screen.
+ * Team, Settings and the audit trail used to live here behind an admin check.
+ * They're now web-console-only, so the hub has no role-conditional rows left.
  */
 
 import React from 'react';
@@ -26,16 +25,14 @@ import { color, space, radius, gutter, layout } from '@/constants/theme';
 import { useRefresh } from '@/hooks/use-refresh';
 import { useAuth } from '@/contexts/AuthContext';
 import {
-  getInventoryStats, listDeliveries, listStaff,
+  getInventoryStats, listDeliveries,
 } from '@/lib/services/admin.service';
-import { getUnreadCount } from '@/lib/services/account.service';
+import { useUnreadCount } from '@/hooks/use-unread-count';
 import type { IconName } from '@/components/ui/Icon';
 
 export default function MoreScreen() {
   const router = useRouter();
   const { user, logout } = useAuth();
-
-  const isAdmin = user?.role === 'ADMIN';
 
   const statsQ = useQuery({
     queryKey: ['inventory', 'stats'],
@@ -51,24 +48,11 @@ export default function MoreScreen() {
     staleTime: 30_000,
   });
 
-  const teamQ = useQuery({
-    queryKey: ['staff', 'count'],
-    queryFn:  () => listStaff({ limit: 1 }),
-    enabled:  isAdmin,
-    staleTime: 5 * 60_000,
-  });
+  const { unread, refetch: refetchUnread } = useUnreadCount();
 
-  const unreadQ = useQuery({
-    queryKey: ['notifications', 'unread-count'],
-    queryFn:  getUnreadCount,
-    staleTime: 30_000,
-  });
-
-  const lowStock  = statsQ.data?.low_stock_count ?? 0;
-  const expiring  = statsQ.data?.expiring_count ?? 0;
-  const awaiting  = awaitingQ.data?.pagination.total ?? 0;
-  const teamSize  = teamQ.data?.pagination.total ?? 0;
-  const unread    = unreadQ.data?.unread_count ?? 0;
+  const lowStock = statsQ.data?.low_stock_count ?? 0;
+  const expiring = statsQ.data?.expiring_count ?? 0;
+  const awaiting = awaitingQ.data?.pagination.total ?? 0;
 
   const confirmSignOut = () => {
     Alert.alert(
@@ -81,15 +65,7 @@ export default function MoreScreen() {
     );
   };
 
-  const refreshAll = () => {
-    void statsQ.refetch();
-    void awaitingQ.refetch();
-    void unreadQ.refetch();
-    if (isAdmin) void teamQ.refetch();
-  };
-
-
-  const { refreshing, onRefresh } = useRefresh(statsQ.refetch, awaitingQ.refetch, unreadQ.refetch);
+  const { refreshing, onRefresh } = useRefresh(statsQ.refetch, awaitingQ.refetch, refetchUnread);
 
   return (
     <View style={{ flex: 1, backgroundColor: color.bg }}>
@@ -116,6 +92,12 @@ export default function MoreScreen() {
             <Text variant="overline" tone="tertiary">Operations</Text>
             <Surface level="sm" padded="none" rounded="lg">
               <Row
+                icon="search"
+                label="Search"
+                hint="Products, pharmacies and orders at once"
+                onPress={() => router.push('/(staff)/search' as never)}
+              />
+              <Row
                 icon="truck"
                 label="Deliveries"
                 hint={awaiting > 0
@@ -139,7 +121,7 @@ export default function MoreScreen() {
               <Row
                 icon="products"
                 label="Products"
-                hint={isAdmin ? 'Catalogue, pricing and images' : 'Browse the catalogue'}
+                hint="Browse the catalogue"
                 onPress={() => router.push('/(staff)/products' as never)}
                 last
               />
@@ -153,43 +135,12 @@ export default function MoreScreen() {
               <Row
                 icon="reports"
                 label="Reports"
-                hint={isAdmin ? 'Platform revenue and performance' : 'Your accounts’ performance'}
+                hint="Your accounts’ performance"
                 onPress={() => router.push('/(staff)/reports' as never)}
-                last={!isAdmin}
+                last
               />
-              {isAdmin ? (
-                <Row
-                  icon="shield"
-                  label="Audit trail"
-                  hint="Who did what, and when"
-                  onPress={() => router.push('/(staff)/audit' as never)}
-                  last
-                />
-              ) : null}
             </Surface>
           </Animated.View>
-
-          {/* ── Administration ── */}
-          {isAdmin ? (
-            <Animated.View entering={FadeInDown.delay(100).duration(320)} style={{ gap: space.sm }}>
-              <Text variant="overline" tone="tertiary">Administration</Text>
-              <Surface level="sm" padded="none" rounded="lg">
-                <Row
-                  icon="team"
-                  label="Team"
-                  hint={teamSize > 0 ? `${teamSize} staff and drivers` : 'Staff and drivers'}
-                  onPress={() => router.push('/(staff)/team' as never)}
-                />
-                <Row
-                  icon="settings"
-                  label="Settings"
-                  hint="Company details, VAT, referrals"
-                  onPress={() => router.push('/(staff)/settings' as never)}
-                  last
-                />
-              </Surface>
-            </Animated.View>
-          ) : null}
 
           {/* ── You ── */}
           <Animated.View entering={FadeInDown.delay(140).duration(320)} style={{ gap: space.sm }}>

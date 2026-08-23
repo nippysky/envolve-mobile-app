@@ -19,14 +19,14 @@
 
 import React, { useCallback, useMemo, useState } from 'react';
 import { View, ScrollView, RefreshControl, Alert } from 'react-native';
-import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Image } from 'expo-image';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 
 import {
-  Text, Button, Input, Pressable, Icon, Surface, Badge, StatusBadge, Skeleton, EmptyState,
+  Text, Button, Input, Pressable, Icon, Surface, StatusBadge, Skeleton, EmptyState,
 } from '@/components/ui';
 import { ScreenHeader } from '@/components/shared/ScreenHeader';
 import { OrderTimeline } from '@/components/orders/OrderTimeline';
@@ -34,7 +34,6 @@ import { color, space, radius, gutter, layout } from '@/constants/theme';
 import { callNumber } from '@/lib/contact';
 import { formatNaira, formatDate } from '@/lib/format';
 import { useRefresh } from '@/hooks/use-refresh';
-import { useAuth } from '@/contexts/AuthContext';
 import { getOrder } from '@/lib/services/orders.service';
 import {
   updateOrderStatus, confirmOrderPayment, type OrderStatus,
@@ -70,8 +69,6 @@ const RECEIVED_VIA = [
 export default function ConsoleOrderDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
-  const insets = useSafeAreaInsets();
-  const { user } = useAuth();
   const queryClient = useQueryClient();
 
   const [busy,      setBusy]      = useState(false);
@@ -80,7 +77,7 @@ export default function ConsoleOrderDetailScreen() {
   const [reference, setReference] = useState('');
   const [payNote,   setPayNote]   = useState('');
 
-  const { data, isLoading, isError, refetch, isRefetching } = useQuery({
+  const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ['orders', 'detail', id],
     queryFn:  () => getOrder(String(id)),
     enabled:  !!id,
@@ -217,6 +214,10 @@ export default function ConsoleOrderDetailScreen() {
             gap: space.lg,
             paddingBottom: space['3xl'],
           }}
+          // iOS insets the scroll view for the keyboard itself, which avoids the
+          // KeyboardAvoidingView offset guesswork. Android is adjustResize (see
+          // AndroidManifest), so the window already shrinks and this is a no-op.
+          automaticallyAdjustKeyboardInsets
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
           refreshControl={

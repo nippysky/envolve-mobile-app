@@ -50,7 +50,7 @@ export function setSessionExpiredHandler(fn: (() => void) | null): void {
 // Prevents multiple parallel requests from each triggering their own refresh.
 
 let isRefreshing = false;
-let refreshQueue: Array<(token: string | null) => void> = [];
+let refreshQueue: ((token: string | null) => void)[] = [];
 
 async function waitForRefresh(): Promise<string | null> {
   return new Promise(resolve => refreshQueue.push(resolve));
@@ -133,10 +133,6 @@ export async function apiFetch<T = unknown>(
   const { skipRetry, headers: extraHeaders, ...rest } = options;
 
   const accessToken = await TokenStorage.getAccess();
-
-  const authHeaders: Record<string, string> = accessToken
-    ? { Authorization: `Bearer ${accessToken}` }
-    : {};
 
   const makeRequest = async (token: string | null) => {
     const tokenHeader: Record<string, string> = token

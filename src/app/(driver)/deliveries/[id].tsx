@@ -29,7 +29,7 @@ import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query';
 import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';
 
 import {
-  Text, Button, Input, Pressable, Icon, Surface, Badge, StatusBadge,
+  Text, Button, Input, Icon, Surface, StatusBadge,
   Skeleton, EmptyState,
 } from '@/components/ui';
 import { ScreenHeader } from '@/components/shared/ScreenHeader';
@@ -235,6 +235,10 @@ export default function DriverRunScreen() {
             gap: space.lg,
             paddingBottom: settled ? space.xl : 220,
           }}
+          // iOS insets the scroll view for the keyboard itself, which avoids the
+          // KeyboardAvoidingView offset guesswork. Android is adjustResize (see
+          // AndroidManifest), so the window already shrinks and this is a no-op.
+          automaticallyAdjustKeyboardInsets
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
           refreshControl={

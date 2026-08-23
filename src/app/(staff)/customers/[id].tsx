@@ -10,8 +10,8 @@
  * reason produces a support call that costs more than typing the reason did.
  * Approval doesn't require one — there's nothing to explain.
  *
- * Assigning a sales rep is ADMIN-only, matching the API. Staff see who owns the
- * account but get no picker, rather than a picker that 403s.
+ * Assigning a sales rep is an admin action and lives in the web console, so
+ * this screen shows who owns the account but offers no picker.
  */
 
 import React, { useCallback, useState } from 'react';
@@ -30,9 +30,8 @@ import { color, space, radius, gutter, layout } from '@/constants/theme';
 import { callNumber, emailAddress } from '@/lib/contact';
 import { formatDate } from '@/lib/format';
 import { useRefresh } from '@/hooks/use-refresh';
-import { useAuth } from '@/contexts/AuthContext';
 import {
-  getCustomer, reviewCustomer, assignStaff, getPcnUrl, listStaff,
+  getCustomer, reviewCustomer, getPcnUrl,
   type CustomerStatus,
 } from '@/lib/services/admin.service';
 import { toast } from '@/lib/toast';
@@ -68,31 +67,23 @@ const REVIEWABLE: CustomerStatus[] = [
 export default function ConsoleCustomerDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
-  const { user } = useAuth();
   const queryClient = useQueryClient();
 
-  const isAdmin = user?.role === 'ADMIN';
-
-  const [busy,        setBusy]        = useState(false);
-  const [rejecting,   setRejecting]   = useState(false);
-  const [reason,      setReason]      = useState('');
-  const [assignOpen,  setAssignOpen]  = useState(false);
+  const [busy,      setBusy]      = useState(false);
+  const [rejecting, setRejecting] = useState(false);
+  const [reason,    setReason]    = useState('');
 
   const customerId = Number(id);
 
-  const { data, isLoading, isError, refetch, isRefetching } = useQuery({
+  const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ['customers', 'detail', customerId],
     queryFn:  () => getCustomer(customerId),
     enabled:  Number.isFinite(customerId),
   });
 
-  const repsQ = useQuery({
-    queryKey: ['staff', 'reps'],
-    queryFn:  () => listStaff({ role: 'STAFF', limit: 100 }),
-    enabled:  isAdmin && assignOpen,
-    staleTime: 5 * 60_000,
-  });
-
+  // Reassigning a customer's sales rep is an admin action and lives in the web
+  // console. The assignment itself is still shown here, read-only, because a
+  // rep needs to know whose account they're looking at.
   const customer = data;
 
   const invalidate = useCallback(async () => {
@@ -126,21 +117,6 @@ export default function ConsoleCustomerDetailScreen() {
       setBusy(false);
     }
   }, [customer, busy, reason, invalidate]);
-
-  const setRep = useCallback(async (staffUserId: number | null) => {
-    if (!customer || busy) return;
-    setBusy(true);
-    try {
-      await assignStaff(customer.id, staffUserId);
-      await invalidate();
-      setAssignOpen(false);
-      toast.success(staffUserId ? 'Sales rep assigned.' : 'Sales rep removed.');
-    } catch (err) {
-      toast.error((err as Error).message, 'Could not assign');
-    } finally {
-      setBusy(false);
-    }
-  }, [customer, busy, invalidate]);
 
   /**
    * The certificate URL is fetched on demand rather than read from the customer
@@ -212,6 +188,10 @@ export default function ConsoleCustomerDetailScreen() {
             gap: space.lg,
             paddingBottom: space['3xl'],
           }}
+          // iOS insets the scroll view for the keyboard itself, which avoids the
+          // KeyboardAvoidingView offset guesswork. Android is adjustResize (see
+          // AndroidManifest), so the window already shrinks and this is a no-op.
+          automaticallyAdjustKeyboardInsets
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
           refreshControl={
@@ -442,69 +422,8 @@ export default function ConsoleCustomerDetailScreen() {
                       </>
                     )}
                   </View>
-                  {isAdmin ? (
-                    <Pressable
-                      onPress={() => setAssignOpen(o => !o)}
-                      haptic="light"
-                      pressOpacity={0.6}
-                      hitSlop={8}
-                      disabled={busy}
-                    >
-                      <Text variant="label" tone="brand">
-                        {assignOpen ? 'Close' : customer.assigned_staff ? 'Change' : 'Assign'}
-                      </Text>
-                    </Pressable>
-                  ) : null}
                 </View>
 
-                {isAdmin && assignOpen ? (
-                  <Animated.View entering={FadeIn.duration(220)} style={{ gap: space.xs }}>
-                    <View style={{ height: layout.hairlineWidth, backgroundColor: color.borderSubtle }} />
-
-                    {repsQ.isLoading ? (
-                      <Skeleton width="100%" height={44} radius="md" />
-                    ) : (
-                      <>
-                        {(repsQ.data?.records ?? []).map(rep => {
-                          const active = customer.assigned_staff?.id === rep.id;
-                          return (
-                            <Pressable
-                              key={rep.id}
-                              onPress={() => void setRep(rep.id)}
-                              haptic="light"
-                              pressOpacity={0.6}
-                              disabled={busy}
-                              style={{
-                                flexDirection: 'row', alignItems: 'center', gap: space.md,
-                                paddingVertical: space.md, minHeight: layout.tapTarget,
-                              }}
-                            >
-                              <View style={{ flex: 1 }}>
-                                <Text variant="body">{rep.first_name} {rep.last_name}</Text>
-                                <Text variant="caption" tone="tertiary">
-                                  {rep.assigned_customers} {rep.assigned_customers === 1 ? 'account' : 'accounts'}
-                                </Text>
-                              </View>
-                              {active ? <Icon name="check" size={16} color={color.brand} /> : null}
-                            </Pressable>
-                          );
-                        })}
-
-                        {customer.assigned_staff ? (
-                          <Pressable
-                            onPress={() => void setRep(null)}
-                            haptic="light"
-                            pressOpacity={0.6}
-                            disabled={busy}
-                            style={{ paddingVertical: space.md }}
-                          >
-                            <Text variant="label" tone="danger">Remove assignment</Text>
-                          </Pressable>
-                        ) : null}
-                      </>
-                    )}
-                  </Animated.View>
-                ) : null}
               </View>
             </Surface>
           </Animated.View>

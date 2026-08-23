@@ -17,13 +17,13 @@
  */
 
 import React from 'react';
-import { View, Platform } from 'react-native';
+import { View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Animated, {
   useAnimatedStyle,
   useDerivedValue,
   withSpring,
-  withTiming,
+  
   interpolate,
 } from 'react-native-reanimated';
 

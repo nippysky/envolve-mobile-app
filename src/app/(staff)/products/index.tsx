@@ -1,10 +1,9 @@
 /**
  * Products — console.
  *
- * Read-only for STAFF, editable for ADMIN, matching the API. Staff still need
+ * Read-only. Catalogue authoring belongs to the web console, but a rep needs
  * this screen constantly — checking a price or stock level while a customer is
- * on the phone — so it isn't hidden from them; the write affordances simply
- * aren't rendered.
+ * on the phone — so it stays, without the write affordances.
  *
  * Draft products with no price are called out explicitly. Quick-import lands
  * products as DRAFT with `selling_price: 0`, and a zero-priced product can't be
@@ -29,7 +28,6 @@ import { ScreenHeader } from '@/components/shared/ScreenHeader';
 import { color, space, radius, gutter, layout } from '@/constants/theme';
 import { formatNaira } from '@/lib/format';
 import { useRefresh } from '@/hooks/use-refresh';
-import { useAuth } from '@/contexts/AuthContext';
 import { useDebounced } from '@/hooks/use-debounced';
 import {
   listAdminProducts, type AdminProduct, type ProductStatus,
@@ -50,9 +48,6 @@ const STATUS_TONE: Record<ProductStatus, 'success' | 'warning' | 'neutral'> = {
 
 export default function ConsoleProductsScreen() {
   const router = useRouter();
-  const { user } = useAuth();
-
-  const isAdmin = user?.role === 'ADMIN';
 
   const [rawSearch, setRawSearch] = useState('');
   const [status,    setStatus]    = useState<ProductStatus | null>(null);
@@ -105,20 +100,6 @@ export default function ConsoleProductsScreen() {
           back
           title="Products"
           subtitle={total > 0 ? `${total.toLocaleString()} matching` : undefined}
-          right={
-            isAdmin ? (
-              <Pressable
-                onPress={() => router.push('/(staff)/products/new' as never)}
-                haptic="medium"
-                pressScale={0.92}
-                hitSlop={8}
-                accessibilityRole="button"
-                accessibilityLabel="Add a product"
-              >
-                <Icon name="plus" size={20} color={color.text} />
-              </Pressable>
-            ) : undefined
-          }
         />
 
         <View style={{ paddingHorizontal: gutter, gap: space.md, paddingBottom: space.md }}>

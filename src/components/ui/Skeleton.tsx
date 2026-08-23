@@ -7,11 +7,13 @@
  */
 
 import React, { useEffect } from 'react';
-import { type DimensionValue, type StyleProp, type ViewStyle } from 'react-native';
+import {
+  View, type DimensionValue, type StyleProp, type ViewStyle,
+} from 'react-native';
 import Animated, {
   useAnimatedStyle, useSharedValue, withRepeat, withSequence, withTiming,
 } from 'react-native-reanimated';
-import { color, radius as radii } from '@/constants/theme';
+import { color, radius as radii, space } from '@/constants/theme';
 
 export interface SkeletonProps {
   width?:  DimensionValue;
@@ -48,9 +50,6 @@ export function Skeleton({ width = '100%', height = 16, radius = 'sm', style }: 
 }
 
 /* ── Composed skeletons ──────────────────────────────────────────────────── */
-
-import { View } from 'react-native';
-import { space } from '@/constants/theme';
 
 /** One list row: avatar block + two text lines. */
 export function RowSkeleton() {

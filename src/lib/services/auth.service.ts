@@ -184,10 +184,6 @@ export function resetPassword(
 
 /* ── Session ─────────────────────────────────────────────────────────────── */
 
-export function getMe() {
-  return apiFetch<AuthUser>('/api/auth/me');
-}
-
 export function logout(refreshToken?: string) {
   return apiFetch<unknown>('/api/auth/logout', {
     method: 'POST',

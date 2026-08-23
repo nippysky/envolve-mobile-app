@@ -11,7 +11,7 @@
  * "Add to basket" teaches the customer nothing about what to do next.
  */
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import { View, ScrollView, useWindowDimensions } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
@@ -66,9 +66,16 @@ export default function CustomerProductScreen() {
 
   // Seed the stepper at the minimum once the product resolves. Starting at 1
   // for a product with a minimum of 10 shows a number that can't be ordered.
-  useEffect(() => {
-    if (product) setQty(product.minimum_order || 1);
-  }, [product]);
+  //
+  // Adjusted during render rather than in an effect. React re-runs the render
+  // immediately, before the browser paints, so the user never sees the wrong
+  // number — whereas an effect paints "1" first and corrects it a frame later.
+  // Tracking which product we seeded for is what stops this looping.
+  const [seededFor, setSeededFor] = useState<number | null>(null);
+  if (product && seededFor !== product.id) {
+    setSeededFor(product.id);
+    setQty(product.minimum_order || 1);
+  }
 
   const hasDiscount = product?.final_price != null && product.final_price < product.selling_price;
   const price    = hasDiscount ? product!.final_price! : (product?.selling_price ?? 0);

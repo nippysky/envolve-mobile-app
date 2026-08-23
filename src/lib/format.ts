@@ -32,13 +32,3 @@ export function capitalise(s: string): string {
   if (!s) return '';
   return s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
 }
-
-/** "PENDING_REVIEW" → "Pending Review" */
-export function humanise(s: string): string {
-  return s.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
-}
-
-/** Truncate with ellipsis */
-export function truncate(s: string, max = 40): string {
-  return s.length > max ? `${s.slice(0, max)}…` : s;
-}

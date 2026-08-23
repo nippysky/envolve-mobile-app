@@ -25,7 +25,7 @@ import {
 } from '@/components/ui';
 import { ProductCard } from '@/components/catalog/ProductCard';
 import { Logo } from '@/components/shared/Logo';
-import { color, space, radius, gutter, layout } from '@/constants/theme';
+import { color, space, radius, gutter } from '@/constants/theme';
 import { useRefresh } from '@/hooks/use-refresh';
 import { useAuth } from '@/contexts/AuthContext';
 import {

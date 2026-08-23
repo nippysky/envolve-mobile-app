@@ -35,6 +35,7 @@ import { API_BASE } from '@/constants/api';
 import { formatNaira, formatDate } from '@/lib/format';
 import { useRefresh } from '@/hooks/use-refresh';
 import { getMyAccount, type CustomerStatus } from '@/lib/services/account.service';
+import { toast } from '@/lib/toast';
 
 /** Short labels — the raw enum values are too long for a list row. */
 const REFERRAL_STATUS: Record<CustomerStatus, string> = {
@@ -45,10 +46,9 @@ const REFERRAL_STATUS: Record<CustomerStatus, string> = {
   REGISTERED:        'Registered',
   REJECTED:          'Rejected',
 };
-import { toast } from '@/lib/toast';
 
 export default function ReferralsScreen() {
-  const { data, isLoading, isError, refetch, isRefetching } = useQuery({
+  const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ['account', 'me'],
     queryFn:  getMyAccount,
     staleTime: 60_000,

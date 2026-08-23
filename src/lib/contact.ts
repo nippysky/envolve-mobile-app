@@ -1,4 +1,4 @@
-import { Linking, Platform } from 'react-native';
+import { Linking } from 'react-native';
 import { toast } from '@/lib/toast';
 
 /**
@@ -26,7 +26,7 @@ import { toast } from '@/lib/toast';
  * "0805 513 6726" produces a malformed URL that fails on some Android
  * diallers.
  */
-export function normalisePhone(raw: string): string {
+function normalisePhone(raw: string): string {
   const trimmed = raw.trim();
   const plus    = trimmed.startsWith('+') ? '+' : '';
   return plus + trimmed.replace(/[^\d]/g, '');
@@ -53,23 +53,6 @@ export function callNumber(phone: string | null | undefined): Promise<boolean> {
     return Promise.resolve(false);
   }
   return open(`tel:${n}`, `No dialler is available for ${phone}.`);
-}
-
-/** Open a new SMS to a number, optionally pre-filled. */
-export function textNumber(
-  phone: string | null | undefined,
-  body?: string,
-): Promise<boolean> {
-  const n = phone ? normalisePhone(phone) : '';
-  if (!n) {
-    toast.error('There’s no phone number on file for this contact.', 'No number');
-    return Promise.resolve(false);
-  }
-  // iOS separates the body with `&`, Android with `?` — getting this wrong
-  // opens the composer with the body as part of the recipient.
-  const sep  = Platform.OS === 'ios' ? '&' : '?';
-  const url  = body ? `sms:${n}${sep}body=${encodeURIComponent(body)}` : `sms:${n}`;
-  return open(url, 'No messaging app is available.');
 }
 
 /** Compose an email, optionally with a subject and body. */

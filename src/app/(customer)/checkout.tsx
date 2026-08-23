@@ -203,7 +203,12 @@ export default function CheckoutScreen() {
       setPhase('idle');
       if (!stranded) toast.error((err as Error).message, 'Checkout failed');
     }
-  }, [busy, orderable, validate, method, payable, user?.email, createOrder, stranded]);
+    // `user`, not `user?.email`. The narrower dependency looks tighter, but the
+    // React Compiler infers the whole object and refuses to optimize a
+    // component whose manual deps it can't reconcile — so the entire checkout
+    // screen was being skipped. `user` only changes identity on sign-in or
+    // sign-out, so this recreates the callback no more often in practice.
+  }, [busy, orderable, validate, method, payable, user, createOrder, stranded]);
 
   const phaseLabel: Record<Phase, string> = {
     idle:             '',

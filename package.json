@@ -2,20 +2,24 @@
   "name": "envolvecare-plus",
   "main": "expo-router/entry",
   "version": "1.0.0",
+  "comment:overrides": "nanoid <3.3.18 can loop forever when a custom generator is given size 0 (GHSA / CWE-835). expo-router pulls it in at RUNTIME, so unlike the other advisories in `npm audit` this one ships in the app. expo-router asks for ^3.3.8, so 3.3.18 is a patch bump inside the range it already accepts — no behaviour change. Remove this override once Expo ships a version that resolves it on its own.",
+  "overrides": {
+    "nanoid": "^3.3.18"
+  },
   "dependencies": {
     "@tanstack/react-query": "^5.101.4",
-    "expo": "~57.0.13",
+    "expo": "~57.0.15",
     "expo-clipboard": "~57.0.1",
     "expo-constants": "~57.0.9",
     "expo-font": "~57.0.1",
     "expo-haptics": "~57.0.1",
     "expo-image": "~57.0.3",
-    "expo-image-picker": "~57.0.10",
+    "expo-image-picker": "~57.0.12",
     "expo-linear-gradient": "~57.0.1",
-    "expo-linking": "~57.0.6",
-    "expo-router": "~57.0.13",
+    "expo-linking": "~57.0.7",
+    "expo-router": "~57.0.15",
     "expo-secure-store": "~57.0.1",
-    "expo-splash-screen": "~57.0.6",
+    "expo-splash-screen": "~57.0.7",
     "expo-status-bar": "~57.0.1",
     "expo-symbols": "~57.0.2",
     "expo-system-ui": "~57.0.2",
@@ -33,6 +37,8 @@
   },
   "devDependencies": {
     "@types/react": "~19.2.2",
+    "eslint": "^9.39.5",
+    "eslint-config-expo": "^57.0.1",
     "typescript": "~6.0.3"
   },
   "scripts": {

@@ -2,7 +2,7 @@
  * Account — driver.
  *
  * Thin by necessity: a driver's record (vehicle, region, status) is maintained
- * by an admin through Team, and there's no self-service endpoint for internal
+ * in the web console, and there's no self-service endpoint for internal
  * roles. Rather than render a form against an API that doesn't exist, this
  * shows what the session knows and says who to ask.
  *
@@ -25,7 +25,6 @@ import { color, space, radius, gutter, layout } from '@/constants/theme';
 import { callNumber } from '@/lib/contact';
 import { useAuth } from '@/contexts/AuthContext';
 import { listMyDeliveries, SETTLED } from '@/lib/services/driver.service';
-import { getUnreadCount } from '@/lib/services/account.service';
 
 const SUPPORT_EMAIL = 'info@envolvepharm.com.ng';
 const DISPATCH_PHONE = '+2348055136726';
@@ -42,16 +41,9 @@ export default function DriverProfileScreen() {
     staleTime: 60_000,
   });
 
-  const unreadQ = useQuery({
-    queryKey: ['notifications', 'unread-count'],
-    queryFn:  getUnreadCount,
-    staleTime: 30_000,
-  });
-
   const records   = deliveriesQ.data?.records ?? [];
   const active    = records.filter(d => !SETTLED.includes(d.status)).length;
   const delivered = records.filter(d => d.status === 'DELIVERED').length;
-  const unread    = unreadQ.data?.unread_count ?? 0;
 
   const name = `${user?.first_name ?? ''} ${user?.last_name ?? ''}`.trim();
   const initials = name.split(' ').filter(Boolean).slice(0, 2)
@@ -169,7 +161,7 @@ export default function DriverProfileScreen() {
             <View style={{ flexDirection: 'row', gap: space.sm, paddingHorizontal: space.xs }}>
               <Icon name="info" size={13} color={color.textDisabled} />
               <Text variant="caption" tone="disabled" style={{ flex: 1 }}>
-                Your vehicle details and assignments are managed by an administrator.
+                Your vehicle details and assignments are managed by the office.
                 Contact them, or email {SUPPORT_EMAIL}, to change them.
               </Text>
             </View>

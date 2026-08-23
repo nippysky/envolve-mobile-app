@@ -24,8 +24,9 @@
 
 import React, { useCallback, useEffect, useState } from 'react';
 import {
-  Modal, View, Dimensions, Platform,
-  type StyleProp, type ViewStyle } from 'react-native';
+  Modal, View, Dimensions, Platform, KeyboardAvoidingView,
+  type StyleProp, type ViewStyle,
+} from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
@@ -83,22 +84,41 @@ export function Sheet({
   const progress = useSharedValue(0);   // 0 = offscreen, 1 = seated
   const dragY    = useSharedValue(0);
 
+  // Mount first, animate second.
+  //
+  // Doing both at once started the timing animation on a frame where the sheet
+  // was still returning `null`, so on a slower device (or with a heavy list
+  // inside) it could finish mounting halfway through its own entrance and
+  // appear to jump into place. The animation now begins on the first frame the
+  // sheet actually exists.
+  //
+  // The mount flag is raised during render rather than in an effect — React's
+  // "adjusting state when a prop changes" pattern. An effect would cost an
+  // extra committed frame before the sheet exists, which is precisely the
+  // delay causing the jump.
+  const [prevVisible, setPrevVisible] = useState(visible);
+  if (visible !== prevVisible) {
+    setPrevVisible(visible);
+    if (visible) setMounted(true);
+  }
+
   useEffect(() => {
-    if (visible) {
-      setMounted(true);
+    if (visible && mounted) {
       dragY.value = 0;
       progress.value = withTiming(1, {
         duration: motion.duration.base,
         easing: Easing.bezier(...motion.easing),
       });
-    } else if (mounted) {
+    } else if (!visible && mounted) {
       progress.value = withTiming(
         0,
         { duration: motion.duration.fast, easing: Easing.bezier(...motion.easing) },
+        // `finished` is false when a new animation interrupts this one, which
+        // is what stops a fast close→open from unmounting the reopened sheet.
         finished => { if (finished) runOnJS(setMounted)(false); },
       );
     }
-  }, [visible]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [visible, mounted]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const close = useCallback(() => { onClose(); }, [onClose]);
 
@@ -132,7 +152,19 @@ export function Sheet({
       navigationBarTranslucent
       onRequestClose={close}
     >
-      <View style={{ flex: 1, justifyContent: 'flex-end' }}>
+      {/* Keyboard avoidance is not optional here: several sheets are forms with
+          a submit button pinned to the bottom (receiving stock, editing a
+          batch). Without this the keyboard covers both the lower fields and the
+          button, and there is no way to scroll past it — the footer sits
+          outside the scrollable body by design.
+
+          `padding` shrinks this container by the keyboard height; the sheet is
+          bottom-anchored, so it rides up. Android's windowSoftInputMode already
+          resizes the window, and adding padding on top of that double-counts. */}
+      <KeyboardAvoidingView
+        style={{ flex: 1, justifyContent: 'flex-end' }}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      >
         {/* Scrim. Tapping it dismisses, which is the gesture people reach for
             before they find the × or the drag. */}
         <Animated.View
@@ -160,7 +192,11 @@ export function Sheet({
                 borderTopRightRadius: radius['3xl'],
                 paddingBottom: Math.max(insets.bottom, space.base),
                 maxHeight: SCREEN_H * 0.88,
-                ...(detent === 'tall' ? { height: SCREEN_H * 0.88 } : null),
+                // `flex: 1`, not a fixed height. A fixed 88% can't shrink when
+                // the keyboard takes half the screen, so the top of a tall
+                // sheet would run off-screen. Flex fills what's available and
+                // the maxHeight still caps it at 88% when the keyboard is down.
+                ...(detent === 'tall' ? { flex: 1 } : null),
                 ...elevation.xl,
               },
               sheetStyle,
@@ -208,7 +244,13 @@ export function Sheet({
               </View>
             ) : null}
 
-            <View style={[{ flexShrink: 1 }, contentStyle]}>{children}</View>
+            {/* A tall sheet's body must *fill* the remaining space, or the
+                FlatList inside it has no bounded height to scroll within.
+                An auto sheet hugs its content instead, and only shrinks if it
+                would otherwise overflow the 88% cap. */}
+            <View style={[detent === 'tall' ? { flex: 1 } : { flexShrink: 1 }, contentStyle]}>
+              {children}
+            </View>
 
             {footer ? (
               <View style={{
@@ -222,7 +264,7 @@ export function Sheet({
             ) : null}
           </Animated.View>
         </GestureDetector>
-      </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }

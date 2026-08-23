@@ -6,19 +6,21 @@
  * not a headline. The product thumbnails act as the recognition cue; people
  * remember what they bought long before they remember ENV-2026-000147.
  *
- * The filter rail is client-side over the fetched pages rather than a server
- * round-trip. `/api/orders/my` doesn't take a status filter, and adding one to
- * the web for a list this short would be a worse trade than filtering here.
+ * The filter rail queries the server. It used to filter the pages already in
+ * memory, which meant "Cancelled" showed the cancelled orders among the first
+ * ten rather than all of them — a customer with a long history simply couldn't
+ * reach the older ones. `/api/orders/my` now takes a `status`.
  */
 
 import React, { useCallback, useMemo, useState } from 'react';
-import { View, FlatList, RefreshControl } from 'react-native';
+import { View, RefreshControl } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Image } from 'expo-image';
 import { useInfiniteQuery } from '@tanstack/react-query';
-import Animated, { FadeInDown } from 'react-native-reanimated';
-import { useSharedValue, useAnimatedScrollHandler } from 'react-native-reanimated';
+import Animated, {
+  FadeInDown, useSharedValue, useAnimatedScrollHandler,
+} from 'react-native-reanimated';
 
 import {
   Text, Pressable, Icon, Surface, Badge, StatusBadge, EmptyState, RowSkeleton,
@@ -38,12 +40,19 @@ const FILTERS: { value: Filter; label: string }[] = [
   { value: 'cancelled', label: 'Cancelled' },
 ];
 
-function matches(order: OrderSummary, filter: Filter): boolean {
+/**
+ * Tab → the `status` the API expects. `all` sends nothing.
+ *
+ * `active` is a server-side shorthand for "not DELIVERED or CANCELLED", so the
+ * definition of an in-progress order lives in one place rather than being
+ * re-derived here.
+ */
+function statusParam(filter: Filter): string | undefined {
   switch (filter) {
-    case 'delivered': return order.status === 'DELIVERED';
-    case 'cancelled': return order.status === 'CANCELLED';
-    case 'active':    return order.status !== 'DELIVERED' && order.status !== 'CANCELLED';
-    default:          return true;
+    case 'delivered': return 'DELIVERED';
+    case 'cancelled': return 'CANCELLED';
+    case 'active':    return 'active';
+    default:          return undefined;
   }
 }
 
@@ -56,9 +65,12 @@ export default function OrdersScreen() {
     onScroll: e => { scrollY.value = e.contentOffset.y; },
   });
 
+  // The filter is part of the query key, so switching tabs refetches from the
+  // server rather than filtering the pages already in memory — which only ever
+  // saw the first ten orders.
   const ordersQ = useInfiniteQuery({
-    queryKey: ['orders', 'mine'],
-    queryFn:  ({ pageParam = 1 }) => listMyOrders(pageParam as number, 10),
+    queryKey: ['orders', 'mine', filter],
+    queryFn:  ({ pageParam = 1 }) => listMyOrders(pageParam as number, 10, statusParam(filter)),
     initialPageParam: 1,
     getNextPageParam: last => {
       const { current_page, total_pages } = last.pagination;
@@ -67,18 +79,30 @@ export default function OrdersScreen() {
     staleTime: 30_000,
   });
 
-  const all = useMemo(
+  // Already filtered by the server — no second pass needed.
+  const orders = useMemo(
     () => ordersQ.data?.pages.flatMap(p => p.records) ?? [],
     [ordersQ.data],
   );
 
-  const orders = useMemo(() => all.filter(o => matches(o, filter)), [all, filter]);
+  /** Total matching the current tab, straight from the API. */
+  const total = ordersQ.data?.pages[0]?.pagination.total ?? 0;
 
   const openOrder = useCallback((id: number) => {
     router.push(`/(customer)/orders/${id}` as never);
   }, [router]);
 
-  const hasAnyOrders = all.length > 0;
+  const filtering = filter !== 'all';
+
+  /**
+   * Whether to show the filter tabs.
+   *
+   * Deliberately not "are there orders on screen". Now that filtering happens
+   * server-side, an empty Cancelled tab returns zero rows — and hiding the
+   * tabs at that moment would strand the customer with no way back to All.
+   * So: always show them while a filter is active.
+   */
+  const showTabs = filtering || total > 0;
 
 
   const { refreshing, onRefresh } = useRefresh(ordersQ.refetch);
@@ -88,7 +112,7 @@ export default function OrdersScreen() {
       <SafeAreaView style={{ flex: 1 }} edges={['top']}>
         <ScreenHeader
           title="Orders"
-          subtitle={hasAnyOrders ? `${all.length} placed` : undefined}
+          subtitle={total > 0 ? `${total} ${filtering ? 'matching' : 'placed'}` : undefined}
           scrollY={scrollY}
           right={
             <Pressable
@@ -110,7 +134,7 @@ export default function OrdersScreen() {
           }
         />
 
-        {hasAnyOrders ? (
+        {showTabs ? (
           <View style={{ flexDirection: 'row', gap: space.sm, paddingHorizontal: gutter, paddingVertical: space.md }}>
             {FILTERS.map(f => {
               const active = filter === f.value;
@@ -181,7 +205,7 @@ export default function OrdersScreen() {
                 actionLabel="Retry"
                 onAction={() => void ordersQ.refetch()}
               />
-            ) : hasAnyOrders ? (
+            ) : filtering ? (
               <EmptyState
                 iconName="filter"
                 compact

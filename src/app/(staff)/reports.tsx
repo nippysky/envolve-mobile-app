@@ -6,9 +6,9 @@
  * so a rep sees their own book here without a filter and without being able to
  * remove one.
  *
- * Admins additionally get a per-rep view via `staff_id`. That's the one place
- * this screen does something the overview can't, and it's the reason it exists
- * separately rather than being a longer overview.
+ * The per-rep view (`staff_id`) was admin-only and now lives in the web
+ * console, so this screen is a single unfiltered report over the signed-in
+ * rep's own accounts.
  *
  * Bars are drawn as proportional fills rather than a charting library. At this
  * width a labelled horizontal bar is more readable than a pie or donut, and it
@@ -22,7 +22,7 @@ import { useQuery } from '@tanstack/react-query';
 import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';
 
 import {
-  Text, Pressable, Icon, Surface, Skeleton, EmptyState,
+  Text, Pressable, Surface, Skeleton, EmptyState,
 } from '@/components/ui';
 import { ScreenHeader } from '@/components/shared/ScreenHeader';
 import { StatTile } from '@/components/admin/StatTile';
@@ -30,8 +30,7 @@ import { Sparkline } from '@/components/admin/Sparkline';
 import { color, space, radius, gutter, layout } from '@/constants/theme';
 import { formatNaira } from '@/lib/format';
 import { useRefresh } from '@/hooks/use-refresh';
-import { useAuth } from '@/contexts/AuthContext';
-import { getReportSummary, listStaff } from '@/lib/services/admin.service';
+import { getReportSummary } from '@/lib/services/admin.service';
 
 const PERIODS = [
   { value: 7,  label: '7 days' },
@@ -40,22 +39,14 @@ const PERIODS = [
 ];
 
 export default function ReportsScreen() {
-  const { user } = useAuth();
-  const isAdmin = user?.role === 'ADMIN';
-
   const [period, setPeriod] = useState(30);
-  const [repId,  setRepId]  = useState<number | null>(null);
 
-  const repsQ = useQuery({
-    queryKey: ['staff', 'reps'],
-    queryFn:  () => listStaff({ role: 'STAFF', limit: 100 }),
-    enabled:  isAdmin,
-    staleTime: 5 * 60_000,
-  });
-
+  // The "filter by sales rep" rail was admin-only. `/api/reports/summary`
+  // already scopes itself to the signed-in staff member's own accounts, so
+  // there is nothing left to filter by.
   const summaryQ = useQuery({
-    queryKey: ['reports', 'summary', period, repId],
-    queryFn:  () => getReportSummary(period, repId ?? undefined),
+    queryKey: ['reports', 'summary', period],
+    queryFn:  () => getReportSummary(period),
     staleTime: 60_000,
   });
 
@@ -129,41 +120,6 @@ export default function ReportsScreen() {
               );
             })}
           </View>
-
-          {/* ── Rep filter (admin) ── */}
-          {isAdmin && (repsQ.data?.records.length ?? 0) > 0 ? (
-            <View style={{ gap: space.sm }}>
-              <Text variant="overline" tone="tertiary">Sales rep</Text>
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={{ gap: space.sm }}
-              >
-                <Pressable
-                  onPress={() => setRepId(null)}
-                  haptic="light"
-                  pressScale={0.95}
-                  style={repChip(repId === null)}
-                >
-                  <Text variant="caption" style={repText(repId === null)}>Everyone</Text>
-                </Pressable>
-
-                {(repsQ.data?.records ?? []).map(rep => (
-                  <Pressable
-                    key={rep.id}
-                    onPress={() => setRepId(rep.id)}
-                    haptic="light"
-                    pressScale={0.95}
-                    style={repChip(repId === rep.id)}
-                  >
-                    <Text variant="caption" style={repText(repId === rep.id)}>
-                      {rep.first_name} {rep.last_name[0]}.
-                    </Text>
-                  </Pressable>
-                ))}
-              </ScrollView>
-            </View>
-          ) : null}
 
           {summaryQ.isError ? (
             <EmptyState
@@ -323,24 +279,7 @@ export default function ReportsScreen() {
 
 /* ── Bits ───────────────────────────────────────────────────────────────── */
 
-function repChip(active: boolean) {
-  return {
-    paddingHorizontal: space.md,
-    height: 30,
-    justifyContent: 'center' as const,
-    borderRadius: radius.full,
-    backgroundColor: active ? color.brandSoft : color.surface,
-    borderWidth: layout.hairlineWidth,
-    borderColor: active ? color.brand : color.border,
-  };
-}
 
-function repText(active: boolean) {
-  return {
-    color: active ? color.brand : color.textSecondary,
-    fontWeight: (active ? '700' : '500') as '700' | '500',
-  };
-}
 
 function Bar({ index, label, value, fraction, tone = 'brand' }: {
   index: number; label: string; value: string; fraction: number;

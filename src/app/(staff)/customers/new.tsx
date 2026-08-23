@@ -26,7 +26,7 @@ import {
   Text, Button, Input, Pressable, Icon, Surface,
 } from '@/components/ui';
 import { ScreenHeader } from '@/components/shared/ScreenHeader';
-import { color, space, radius, gutter, layout } from '@/constants/theme';
+import { color, space, gutter, layout } from '@/constants/theme';
 import { apiFetch, ApiError } from '@/lib/api-client';
 import { NIGERIAN_STATES } from '@/constants/states';
 import { toast } from '@/lib/toast';

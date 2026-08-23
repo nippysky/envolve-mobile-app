@@ -31,7 +31,7 @@
  * address on a phone while someone waits is not.
  */
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import { View, ScrollView, KeyboardAvoidingView, Platform, FlatList } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
@@ -115,13 +115,18 @@ export default function OnBehalfOrderScreen() {
   const [errs, setErrs] = useState<Record<string, string>>({});
 
   // Prefill the delivery details from the account, then let the rep override.
-  useEffect(() => {
-    if (!customer) return;
+  //
+  // Adjusted during render rather than in an effect. Keyed on the customer id
+  // so re-renders while the rep is typing don't overwrite what they've typed —
+  // only actually switching pharmacy re-seeds.
+  const [seededFor, setSeededFor] = useState<number | null>(null);
+  if (customer && seededFor !== customer.id) {
+    setSeededFor(customer.id);
     setStreet(customer.address ?? '');
     setCity(customer.city ?? '');
     setState(customer.state ?? '');
     setPhone(customer.user.phone ?? '');
-  }, [customer?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  }
 
   const subtotal = useMemo(
     () => lines.reduce((s, l) => {

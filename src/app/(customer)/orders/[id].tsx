@@ -25,7 +25,7 @@ import { useQuery } from '@tanstack/react-query';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 
 import {
-  Text, Button, Pressable, Icon, Surface, Badge, StatusBadge, Skeleton, EmptyState,
+  Text, Button, Pressable, Icon, Surface, StatusBadge, Skeleton, EmptyState,
 } from '@/components/ui';
 import { ScreenHeader } from '@/components/shared/ScreenHeader';
 import { OrderTimeline } from '@/components/orders/OrderTimeline';
@@ -40,7 +40,7 @@ export default function OrderDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
 
-  const { data, isLoading, isError, refetch, isRefetching } = useQuery({
+  const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ['orders', 'detail', id],
     queryFn:  () => getOrder(String(id)),
     enabled:  !!id,

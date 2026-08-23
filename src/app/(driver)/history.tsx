@@ -28,7 +28,7 @@ import { color, space, radius, gutter, layout } from '@/constants/theme';
 import { formatNaira, formatDate } from '@/lib/format';
 import { useRefresh } from '@/hooks/use-refresh';
 import {
-  listMyDeliveries, SETTLED, type DriverDelivery, type DeliveryStatus,
+  listMyDeliveries, SETTLED, type DriverDelivery,
 } from '@/lib/services/driver.service';
 
 type Filter = 'all' | 'DELIVERED' | 'FAILED';

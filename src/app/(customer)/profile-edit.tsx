@@ -15,7 +15,7 @@
  * on a form you've only looked at invites pointless writes.
  */
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import { View, ScrollView, KeyboardAvoidingView, Platform } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
@@ -60,8 +60,13 @@ export default function ProfileEditScreen() {
 
   // Seed once the profile arrives. Keyed on user_id so a refetch that returns
   // the same person doesn't stomp on edits in progress.
-  useEffect(() => {
-    if (!profile) return;
+  //
+  // Adjusted during render rather than in an effect: an effect would paint the
+  // empty form for a frame before filling it, and the re-render React does for
+  // a render-phase update happens before paint.
+  const [seededFor, setSeededFor] = useState<number | null>(null);
+  if (profile && seededFor !== profile.user_id) {
+    setSeededFor(profile.user_id);
     setFirst(profile.first_name);
     setLast(profile.last_name);
     setPhone(profile.phone ?? '');
@@ -70,7 +75,7 @@ export default function ProfileEditScreen() {
         ? profile.gender
         : undefined,
     );
-  }, [profile?.user_id]); // eslint-disable-line react-hooks/exhaustive-deps
+  }
 
   // Only changed fields are sent — PATCH accepts a partial and audits the diff.
   const patch = useMemo<ProfileUpdate>(() => {

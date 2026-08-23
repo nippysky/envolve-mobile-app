@@ -62,8 +62,22 @@ export interface OrderSummary {
   tracking_code:   string | null;
 }
 
-export function listMyOrders(page = 1, limit = 10) {
-  return apiFetch<Paginated<OrderSummary>>(`/api/orders/my?page=${page}&limit=${limit}`);
+/**
+ * `status` accepts any OrderStatus, or `active` for "not finished yet".
+ *
+ * Filtering server-side rather than over the loaded pages: with infinite
+ * scroll, a client-side filter only ever sees what has already been fetched,
+ * so picking "Cancelled" showed the cancelled orders *among the first ten*
+ * rather than all of them.
+ */
+export function listMyOrders(
+  page = 1,
+  limit = 10,
+  status?: string,
+) {
+  const p = new URLSearchParams({ page: String(page), limit: String(limit) });
+  if (status) p.set('status', status);
+  return apiFetch<Paginated<OrderSummary>>(`/api/orders/my?${p.toString()}`);
 }
 
 /* ── Order detail ───────────────────────────────────────────────────────── */

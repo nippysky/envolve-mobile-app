@@ -6,15 +6,15 @@
  * here — an unapproved account can browse but can't order, so every hour in
  * the queue is an hour of lost trade.
  *
- * Admins get an extra filter: customers assigned to a particular rep. Staff
- * don't, because the API already scopes their view.
+ * A rep sees only their own book — the API scopes the list for them — so there
+ * is no "filter by rep" rail to offer.
  */
 
 import React, { useCallback, useMemo, useState } from 'react';
 import { View, RefreshControl } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
+import { useInfiniteQuery } from '@tanstack/react-query';
 import Animated, {
   FadeInDown, useSharedValue, useAnimatedScrollHandler,
 } from 'react-native-reanimated';
@@ -26,10 +26,9 @@ import { ScreenHeader } from '@/components/shared/ScreenHeader';
 import { color, space, radius, gutter, layout } from '@/constants/theme';
 import { formatDate } from '@/lib/format';
 import { useRefresh } from '@/hooks/use-refresh';
-import { useAuth } from '@/contexts/AuthContext';
 import { useDebounced } from '@/hooks/use-debounced';
 import {
-  listCustomers, listStaff,
+  listCustomers,
   type AdminCustomer, type CustomerStatus,
 } from '@/lib/services/admin.service';
 
@@ -69,10 +68,7 @@ const STATUS_LABEL: Record<CustomerStatus, string> = {
 
 export default function ConsoleCustomersScreen() {
   const router = useRouter();
-  const { user } = useAuth();
   const params = useLocalSearchParams<{ status?: string }>();
-
-  const isAdmin = user?.role === 'ADMIN';
 
   // Deep-linked from the overview's "awaiting review" action.
   const initialStatus = STATUSES.some(s => s.value === params.status)
@@ -81,7 +77,6 @@ export default function ConsoleCustomersScreen() {
 
   const [rawSearch, setRawSearch] = useState('');
   const [status,    setStatus]    = useState<CustomerStatus | null>(initialStatus);
-  const [repId,     setRepId]     = useState<number | null>(null);
 
   const search = useDebounced(rawSearch, 350);
 
@@ -90,20 +85,13 @@ export default function ConsoleCustomersScreen() {
     onScroll: e => { scrollY.value = e.contentOffset.y; },
   });
 
-  // Reps for the assignment filter. Admin only — staff can't reassign or
-  // filter by someone else's book.
-  const repsQ = useQuery({
-    queryKey: ['staff', 'reps'],
-    queryFn:  () => listStaff({ role: 'STAFF', limit: 100 }),
-    enabled:  isAdmin,
-    staleTime: 5 * 60_000,
-  });
-
+  // The "filter by rep" rail was admin-only — a staff member only ever sees
+  // their own book, which the API already scopes for them.
   const customersQ = useInfiniteQuery({
-    queryKey: ['customers', 'console', search, status, repId],
+    queryKey: ['customers', 'console', search, status],
     queryFn:  ({ pageParam = 1 }) => listCustomers({
       page: pageParam as number, limit: 20,
-      search, status, assigned_staff_id: repId,
+      search, status,
     }),
     initialPageParam: 1,
     getNextPageParam: last => {
@@ -119,7 +107,7 @@ export default function ConsoleCustomersScreen() {
   );
 
   const total    = customersQ.data?.pages[0]?.pagination.total ?? 0;
-  const filtered = !!search || !!status || !!repId;
+  const filtered = !!search || !!status;
 
   const open = useCallback((id: number) => {
     router.push(`/(staff)/customers/${id}` as never);
@@ -197,36 +185,6 @@ export default function ConsoleCustomersScreen() {
             ))}
           </Animated.ScrollView>
 
-          {isAdmin && (repsQ.data?.records.length ?? 0) > 0 ? (
-            <Animated.ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={{ gap: space.sm }}
-            >
-              <Pressable
-                onPress={() => setRepId(null)}
-                haptic="light"
-                pressScale={0.95}
-                style={chipStyle(repId === null)}
-              >
-                <Text variant="caption" style={chipText(repId === null)}>Any rep</Text>
-              </Pressable>
-
-              {(repsQ.data?.records ?? []).map(rep => (
-                <Pressable
-                  key={rep.id}
-                  onPress={() => setRepId(rep.id)}
-                  haptic="light"
-                  pressScale={0.95}
-                  style={chipStyle(repId === rep.id)}
-                >
-                  <Text variant="caption" style={chipText(repId === rep.id)}>
-                    {rep.first_name} {rep.last_name[0]}.
-                  </Text>
-                </Pressable>
-              ))}
-            </Animated.ScrollView>
-          ) : null}
         </View>
 
         <Animated.FlatList
@@ -275,7 +233,7 @@ export default function ConsoleCustomersScreen() {
                 compact
                 title="No customers match"
                 actionLabel="Clear filters"
-                onAction={() => { setRawSearch(''); setStatus(null); setRepId(null); }}
+                onAction={() => { setRawSearch(''); setStatus(null); }}
               />
             ) : (
               <EmptyState
@@ -296,25 +254,6 @@ export default function ConsoleCustomersScreen() {
 }
 
 /* ── Bits ───────────────────────────────────────────────────────────────── */
-
-function chipStyle(active: boolean) {
-  return {
-    paddingHorizontal: space.md,
-    height: 30,
-    justifyContent: 'center' as const,
-    borderRadius: radius.full,
-    backgroundColor: active ? color.brandSoft : color.surface,
-    borderWidth: layout.hairlineWidth,
-    borderColor: active ? color.brand : color.border,
-  };
-}
-
-function chipText(active: boolean) {
-  return {
-    color: active ? color.brand : color.textSecondary,
-    fontWeight: (active ? '700' : '500') as '700' | '500',
-  };
-}
 
 function CustomerRow({ customer, index, onPress }: {
   customer: AdminCustomer; index: number; onPress: () => void;

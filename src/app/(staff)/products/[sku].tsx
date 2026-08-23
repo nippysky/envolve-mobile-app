@@ -1,124 +1,50 @@
 /**
- * Product detail — console.
+ * Product detail — console. Read-only.
  *
- * Staff read; admins edit inline. Editing is per-field-group rather than a
- * separate form screen, because the common case is changing one number — a
- * price, a minimum stock level — and a round trip through an edit screen for
- * one field is friction with no payoff.
+ * Catalogue authoring (pricing, stock levels, status) is an admin job and lives
+ * in the web console. What a rep needs on a phone is the ability to answer
+ * "what does this cost and have we got it?" while a pharmacist is on the line,
+ * which is all this screen does.
  *
- * The activation guard is mirrored from the API: a product with no selling
- * price cannot be set ACTIVE. The API rejects it; this screen explains why
- * before you try, and offers the price field instead.
+ * The unpriced warning stays, because a product with no selling price can't be
+ * ordered — a rep needs to know that before they try to add it to a basket.
  */
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React from 'react';
 import { View, ScrollView, RefreshControl, useWindowDimensions } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Image } from 'expo-image';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
-import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';
+import { useQuery } from '@tanstack/react-query';
+import Animated, { FadeInDown } from 'react-native-reanimated';
 
 import {
-  Text, Button, Input, Pressable, Icon, Surface, Badge, Skeleton, EmptyState,
+  Text, Icon, Surface, Badge, Skeleton, EmptyState,
 } from '@/components/ui';
 import { ScreenHeader } from '@/components/shared/ScreenHeader';
 import { color, space, radius, gutter, layout } from '@/constants/theme';
 import { formatNaira, formatDate } from '@/lib/format';
 import { useRefresh } from '@/hooks/use-refresh';
-import { useAuth } from '@/contexts/AuthContext';
 import {
-  getAdminProduct, updateProduct, type ProductStatus,
+  getAdminProduct, type ProductStatus,
 } from '@/lib/services/admin.service';
-import { toast } from '@/lib/toast';
 
 const STATUS_TONE: Record<ProductStatus, 'success' | 'warning' | 'neutral'> = {
   ACTIVE: 'success', DRAFT: 'warning', DISCONTINUED: 'neutral',
 };
 
-const STATUSES: ProductStatus[] = ['DRAFT', 'ACTIVE', 'DISCONTINUED'];
-
 export default function ConsoleProductDetailScreen() {
   const { sku } = useLocalSearchParams<{ sku: string }>();
   const router = useRouter();
   const { width } = useWindowDimensions();
-  const { user } = useAuth();
-  const queryClient = useQueryClient();
 
-  const isAdmin = user?.role === 'ADMIN';
-
-  const [editing, setEditing] = useState(false);
-  const [busy,    setBusy]    = useState(false);
-
-  const [price,   setPrice]   = useState('');
-  const [minOrd,  setMinOrd]  = useState('');
-  const [minStock, setMinStock] = useState('');
-  const [shelf,   setShelf]   = useState('');
-
-  const { data, isLoading, isError, refetch, isRefetching } = useQuery({
+  const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ['products', 'detail', sku],
     queryFn:  () => getAdminProduct(String(sku)),
     enabled:  !!sku,
   });
 
   const product = data?.product;
-
-  useEffect(() => {
-    if (!product) return;
-    setPrice(product.selling_price > 0 ? String(product.selling_price) : '');
-    setMinOrd(String(product.minimum_order));
-    setMinStock(String(product.minimum_stock_level));
-    setShelf(product.shelf_location ?? '');
-  }, [product?.id]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const save = useCallback(async () => {
-    if (!product || busy) return;
-
-    const p = parseFloat(price);
-    if (price && (!Number.isFinite(p) || p < 0)) {
-      toast.error('Enter a valid selling price.', 'Check the price');
-      return;
-    }
-
-    setBusy(true);
-    try {
-      await updateProduct(product.sku, {
-        selling_price:       price ? p : undefined,
-        minimum_order:       minOrd ? parseInt(minOrd, 10) : undefined,
-        minimum_stock_level: minStock ? parseInt(minStock, 10) : undefined,
-        shelf_location:      shelf.trim() || undefined,
-      });
-      await queryClient.invalidateQueries({ queryKey: ['products'] });
-      setEditing(false);
-      toast.success('Product updated.');
-    } catch (err) {
-      toast.error((err as Error).message, 'Could not save');
-    } finally {
-      setBusy(false);
-    }
-  }, [product, busy, price, minOrd, minStock, shelf, queryClient]);
-
-  const setStatus = useCallback(async (next: ProductStatus) => {
-    if (!product || busy) return;
-
-    // Mirrors the server guard so the rejection is explained, not just returned.
-    if (next === 'ACTIVE' && product.selling_price <= 0) {
-      toast.error('Set a selling price before activating this product.', 'No price set');
-      setEditing(true);
-      return;
-    }
-
-    setBusy(true);
-    try {
-      await updateProduct(product.sku, { status: next });
-      await queryClient.invalidateQueries({ queryKey: ['products'] });
-      toast.success(`Product is now ${next.toLowerCase()}.`);
-    } catch (err) {
-      toast.error((err as Error).message, 'Could not change status');
-    } finally {
-      setBusy(false);
-    }
-  }, [product, busy, queryClient]);
 
   const { refreshing, onRefresh } = useRefresh(refetch);
 
@@ -171,21 +97,6 @@ export default function ConsoleProductDetailScreen() {
           back
           title={product.brand_name}
           subtitle={product.sku}
-          right={
-            isAdmin ? (
-              <Pressable
-                onPress={() => setEditing(e => !e)}
-                haptic="light"
-                pressScale={0.92}
-                hitSlop={8}
-                disabled={busy}
-                accessibilityRole="button"
-                accessibilityLabel={editing ? 'Stop editing' : 'Edit product'}
-              >
-                <Icon name={editing ? 'close' : 'edit'} size={18} color={color.text} />
-              </Pressable>
-            ) : undefined
-          }
         />
 
         <ScrollView
@@ -270,7 +181,7 @@ export default function ConsoleProductDetailScreen() {
                     <Text variant="label" style={{ color: '#92400e' }}>This product can’t be sold</Text>
                     <Text variant="caption" style={{ color: '#a16207' }}>
                       It has no selling price, so it can’t be activated or added to an
-                      order. {isAdmin ? 'Set one below.' : 'Ask an admin to set one.'}
+                      order. Ask an admin to set one in the web console.
                     </Text>
                   </View>
                 </View>
@@ -278,99 +189,6 @@ export default function ConsoleProductDetailScreen() {
             </Animated.View>
           ) : null}
 
-          {/* ── Edit ── */}
-          {isAdmin && editing ? (
-            <Animated.View entering={FadeIn.duration(240)} style={{ gap: space.sm }}>
-              <Text variant="overline" tone="tertiary">Edit</Text>
-              <Surface level="sm" padded="base" rounded="lg">
-                <View style={{ gap: space.base }}>
-                  <Input
-                    label="Selling price"
-                    hint="Naira, per pack"
-                    placeholder="0"
-                    value={price}
-                    onChangeText={setPrice}
-                    keyboardType="decimal-pad"
-                    editable={!busy}
-                    leading={<Text variant="callout" tone="tertiary">₦</Text>}
-                  />
-
-                  <View style={{ flexDirection: 'row', gap: space.md }}>
-                    <Input
-                      label="Minimum order"
-                      hint="Packs"
-                      value={minOrd}
-                      onChangeText={setMinOrd}
-                      keyboardType="number-pad"
-                      editable={!busy}
-                      containerStyle={{ flex: 1 }}
-                    />
-                    <Input
-                      label="Reorder level"
-                      hint="Flags as low"
-                      value={minStock}
-                      onChangeText={setMinStock}
-                      keyboardType="number-pad"
-                      editable={!busy}
-                      containerStyle={{ flex: 1 }}
-                    />
-                  </View>
-
-                  <Input
-                    label="Shelf location"
-                    placeholder="e.g. A3-04"
-                    value={shelf}
-                    onChangeText={setShelf}
-                    autoCapitalize="characters"
-                    editable={!busy}
-                  />
-
-                  <Button fullWidth loading={busy} disabled={busy} onPress={save} haptic="medium">
-                    Save changes
-                  </Button>
-                </View>
-              </Surface>
-            </Animated.View>
-          ) : null}
-
-          {/* ── Status ── */}
-          {isAdmin ? (
-            <Animated.View entering={FadeInDown.delay(120).duration(320)} style={{ gap: space.sm }}>
-              <Text variant="overline" tone="tertiary">Status</Text>
-              <View style={{ flexDirection: 'row', gap: space.sm, flexWrap: 'wrap' }}>
-                {STATUSES.map(s => {
-                  const active   = product.status === s;
-                  const blocked  = s === 'ACTIVE' && unpriced;
-                  return (
-                    <Pressable
-                      key={s}
-                      onPress={() => void setStatus(s)}
-                      disabled={busy || active}
-                      haptic="light"
-                      pressScale={0.95}
-                      accessibilityRole="button"
-                      accessibilityState={{ selected: active, disabled: busy || active }}
-                      style={{
-                        paddingHorizontal: space.base, height: 36,
-                        justifyContent: 'center', borderRadius: radius.full,
-                        backgroundColor: active ? color.text : color.surface,
-                        borderWidth: layout.hairlineWidth,
-                        borderColor: active ? color.text : color.border,
-                        opacity: blocked ? 0.45 : 1,
-                      }}
-                    >
-                      <Text variant="caption" style={{
-                        color: active ? '#fff' : color.textSecondary,
-                        fontWeight: active ? '700' : '500',
-                      }}>
-                        {s.toLowerCase()}
-                      </Text>
-                    </Pressable>
-                  );
-                })}
-              </View>
-            </Animated.View>
-          ) : null}
 
           {/* ── Facts ── */}
           <Animated.View entering={FadeInDown.delay(160).duration(320)} style={{ gap: space.sm }}>
@@ -391,17 +209,15 @@ export default function ConsoleProductDetailScreen() {
             </Surface>
           </Animated.View>
 
-          {!isAdmin ? (
-            <Surface tone="subtle" level="none" padded="md" rounded="md">
-              <View style={{ flexDirection: 'row', gap: space.sm }}>
-                <Icon name="lock" size={14} color={color.textTertiary} />
-                <Text variant="caption" tone="tertiary" style={{ flex: 1 }}>
-                  Products are managed by admins. You have read access so you can
-                  quote prices and stock.
-                </Text>
-              </View>
-            </Surface>
-          ) : null}
+          <Surface tone="subtle" level="none" padded="md" rounded="md">
+            <View style={{ flexDirection: 'row', gap: space.sm }}>
+              <Icon name="lock" size={14} color={color.textTertiary} />
+              <Text variant="caption" tone="tertiary" style={{ flex: 1 }}>
+                Products are managed in the web console. You have read access so
+                you can quote prices and stock.
+              </Text>
+            </View>
+          </Surface>
         </ScrollView>
       </SafeAreaView>
     </View>

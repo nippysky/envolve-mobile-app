@@ -22,7 +22,7 @@ import {
 } from '@/components/ui';
 import { ScreenHeader } from '@/components/shared/ScreenHeader';
 import { OrderTimeline } from '@/components/orders/OrderTimeline';
-import { color, space, radius, gutter, layout } from '@/constants/theme';
+import { color, space, gutter } from '@/constants/theme';
 import { formatDate } from '@/lib/format';
 import { track, type TrackingResult } from '@/lib/services/orders.service';
 import { ApiError } from '@/lib/api-client';

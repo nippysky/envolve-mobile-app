@@ -18,7 +18,6 @@ import { Text, Button, Input, Pressable, Icon, Surface } from '@/components/ui';
 import { color, space } from '@/constants/theme';
 import { useAuth } from '@/contexts/AuthContext';
 import { loginCustomer } from '@/lib/services/auth.service';
-import { toast } from '@/lib/toast';
 
 export default function CustomerLoginScreen() {
   const router = useRouter();

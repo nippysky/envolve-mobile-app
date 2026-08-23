@@ -23,7 +23,7 @@ const TERMS: LegalSection[] = [
   },
   {
     title: "3. Description of Services",
-    body: `EnvolveCare Plus provides a platform for:\\n\\n• Customers: browsing, ordering, and tracking pharmaceutical products and health supplies.\\n• Pharmacists & Staff: managing orders, inventory, and customer interactions.\\n• Delivery Drivers: receiving and fulfilling delivery assignments.\\n• Administrators: managing users, roles, and platform settings.\\n\\nWe do not provide medical advice. Content in the App is for informational purposes only. Always consult a qualified healthcare professional before making health decisions.`,
+    body: `EnvolveCare Plus provides a platform for:\\n\\n• Customers: browsing, ordering, and tracking pharmaceutical products and health supplies.\\n• Pharmacists & Staff: managing orders, inventory, and customer interactions.\\n• Delivery Drivers: receiving and fulfilling delivery assignments.\\n\\nWe do not provide medical advice. Content in the App is for informational purposes only. Always consult a qualified healthcare professional before making health decisions.`,
   },
   {
     title: "4. Account Registration",

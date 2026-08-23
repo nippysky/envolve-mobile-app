@@ -1,8 +1,8 @@
 /**
  * Your account — console.
  *
- * Deliberately thin. A staff member's own record is managed by an admin
- * through Team, and `/api/customers/me` is customer-only, so there's no
+ * Deliberately thin. A staff member's own record is maintained in the web
+ * console, and `/api/customers/me` is customer-only, so there's no
  * self-service profile endpoint for internal roles. Rather than build a form
  * against an endpoint that doesn't exist, this shows what the session knows and
  * says plainly who to ask for a change.
@@ -28,7 +28,6 @@ import type { IconName } from '@/components/ui/Icon';
 const SUPPORT_EMAIL = 'info@envolvepharm.com.ng';
 
 const ROLE_BLURB: Record<string, string> = {
-  ADMIN:  'Full access — settings, team, products, audit trail.',
   STAFF:  'Orders, customers and deliveries for the accounts assigned to you.',
   DRIVER: 'Your delivery assignments and handovers.',
 };
@@ -86,7 +85,9 @@ export default function ConsoleProfileScreen() {
                 </View>
 
                 <View style={{ flexDirection: 'row', gap: space.sm, flexWrap: 'wrap' }}>
-                  <Badge tone={role === 'ADMIN' ? 'brand' : 'neutral'} size="sm" dot>
+                  {/* Only STAFF reaches this screen now — admins sign in on the
+                      web console — so there's no role to distinguish against. */}
+                  <Badge tone="neutral" size="sm" dot>
                     {role.toLowerCase()}
                   </Badge>
                 </View>
@@ -140,7 +141,7 @@ export default function ConsoleProfileScreen() {
             <View style={{ flexDirection: 'row', gap: space.sm, paddingHorizontal: space.xs }}>
               <Icon name="info" size={13} color={color.textDisabled} />
               <Text variant="caption" tone="disabled" style={{ flex: 1 }}>
-                Staff records are maintained by an administrator. Ask them, or email{' '}
+                Staff records are maintained by the office. Ask them, or email{' '}
                 {SUPPORT_EMAIL}, to change your name, email or role.
               </Text>
             </View>

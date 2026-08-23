@@ -138,6 +138,14 @@ export function BasketProvider({ children }: { children: React.ReactNode }) {
   }, [isCustomer, read, commit]);
 
   // Load on sign-in, clear on sign-out.
+  //
+  // This one stays an effect, unlike the form-seeding elsewhere in the app.
+  // Fetching from the server on mount is the case effects exist for —
+  // synchronising with an external system — and there is no render-phase
+  // equivalent. `refresh` does flip `loading` synchronously, which is what the
+  // rule objects to, but that flag is the whole point: it's what renders the
+  // basket's loading state.
+  // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { void refresh(); }, [refresh]);
 
   /**

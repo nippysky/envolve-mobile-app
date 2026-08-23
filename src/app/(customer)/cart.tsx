@@ -18,7 +18,7 @@
 
 import React, { useCallback, useMemo, useState } from 'react';
 import { View, FlatList, RefreshControl } from 'react-native';
-import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Image } from 'expo-image';
 import Animated, { FadeIn, FadeInDown, Layout } from 'react-native-reanimated';
@@ -35,7 +35,6 @@ import { toast } from '@/lib/toast';
 
 export default function BasketScreen() {
   const router = useRouter();
-  const insets = useSafeAreaInsets();
   const basket = useBasket();
 
   const [busyItem, setBusyItem] = useState<number | null>(null);
