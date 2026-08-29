@@ -2,15 +2,16 @@
  * Deliveries — console.
  *
  * A dispatch board. Sorted by the API newest-first, filtered by status, and
- * with the two actions that actually move work along inline on each card:
- * assign a driver, and advance the status.
+ * with the action that moves work along inline on each card: advancing the
+ * status.
  *
- * Two things the API enforces that this screen encodes rather than discovers:
+ * Assigning a driver is deliberately absent. It is an admin action — the API
+ * returns 403 for anyone else — and no admin can sign in to this app, so the
+ * affordance would 403 for every user who could ever see it. Reps still see
+ * who is assigned, and can call them.
  *
- *   • **`driver_id` is the driver-table id.** `/api/staff` returns drivers with
- *     both `id` (the user id) and `driver_record_id`. Passing the wrong one
- *     assigns nobody, or the wrong person. The picker sends
- *     `driver_record_id`.
+ * One thing the API enforces that this screen encodes rather than discovers:
+ *
  *   • **`cash_collected` is explicit.** Marking a delivery DELIVERED does not
  *     imply money changed hands. For a cash-on-delivery order the driver is
  *     asked separately, because a handover without collection must not leave
@@ -18,17 +19,17 @@
  */
 
 import React, { useCallback, useMemo, useState } from 'react';
-import { View, ScrollView, RefreshControl, Alert } from 'react-native';
+import { View, RefreshControl, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
-import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query';
 import Animated, {
   FadeInDown, useSharedValue, useAnimatedScrollHandler,
 } from 'react-native-reanimated';
 
 import {
   Text, Button, Input, Pressable, Icon, Surface, Badge, StatusBadge,
-  EmptyState, RowSkeleton, Sheet, SheetOption,
+  EmptyState, RowSkeleton,
 } from '@/components/ui';
 import { ScreenHeader } from '@/components/shared/ScreenHeader';
 import { color, space, radius, gutter, layout } from '@/constants/theme';
@@ -37,7 +38,7 @@ import { formatNaira, formatDate } from '@/lib/format';
 import { useRefresh } from '@/hooks/use-refresh';
 import { useDebounced } from '@/hooks/use-debounced';
 import {
-  listDeliveries, updateDelivery, listStaff,
+  listDeliveries, updateDelivery,
   type AdminDelivery, type DeliveryStatus,
 } from '@/lib/services/admin.service';
 import { toast } from '@/lib/toast';
@@ -80,7 +81,6 @@ export default function DeliveriesScreen() {
 
   const [rawSearch, setRawSearch] = useState('');
   const [status,    setStatus]    = useState<DeliveryStatus | null>(null);
-  const [assigning, setAssigning] = useState<number | null>(null);
   const [busyId,    setBusyId]    = useState<number | null>(null);
 
   const search = useDebounced(rawSearch, 350);
@@ -102,14 +102,6 @@ export default function DeliveriesScreen() {
     staleTime: 20_000,
   });
 
-  // Drivers for the assignment sheet — only fetched once a card opens one.
-  const driversQ = useQuery({
-    queryKey: ['staff', 'drivers'],
-    queryFn:  () => listStaff({ role: 'DRIVER', limit: 100 }),
-    enabled:  assigning !== null,
-    staleTime: 5 * 60_000,
-  });
-
   const deliveries = useMemo(
     () => deliveriesQ.data?.pages.flatMap(p => p.records) ?? [],
     [deliveriesQ.data],
@@ -118,37 +110,10 @@ export default function DeliveriesScreen() {
   const total    = deliveriesQ.data?.pages[0]?.pagination.total ?? 0;
   const filtered = !!search || !!status;
 
-  /** The delivery the assignment sheet is currently acting on. */
-  const assigningDelivery = useMemo(
-    () => (assigning === null ? null : deliveries.find(d => d.id === assigning) ?? null),
-    [assigning, deliveries],
-  );
-
-  // A driver with no driver record can't be assigned — the API keys assignment
-  // on the driver table, not the user.
-  const assignableDrivers = useMemo(
-    () => (driversQ.data?.records ?? []).filter(d => d.driver_record_id !== null),
-    [driversQ.data],
-  );
-
   const invalidate = useCallback(async () => {
     await queryClient.invalidateQueries({ queryKey: ['deliveries'] });
     await queryClient.invalidateQueries({ queryKey: ['orders'] });
   }, [queryClient]);
-
-  const assignDriver = useCallback(async (deliveryId: number, driverRecordId: number | null) => {
-    setBusyId(deliveryId);
-    try {
-      await updateDelivery(deliveryId, { driver_id: driverRecordId });
-      await invalidate();
-      setAssigning(null);
-      toast.success(driverRecordId ? 'Driver assigned.' : 'Driver removed.');
-    } catch (err) {
-      toast.error((err as Error).message, 'Could not assign driver');
-    } finally {
-      setBusyId(null);
-    }
-  }, [invalidate]);
 
   const move = useCallback(async (
     delivery: AdminDelivery,
@@ -288,7 +253,6 @@ export default function DeliveriesScreen() {
               delivery={item}
               index={index}
               busy={busyId === item.id}
-              onToggleAssign={() => setAssigning(item.id)}
               onAdvance={next =>
                 next === 'DELIVERED' ? completeDelivery(item) : void move(item, next)}
               onFail={() => markFailed(item)}
@@ -329,65 +293,6 @@ export default function DeliveriesScreen() {
         />
       </SafeAreaView>
 
-      {/* One picker at screen level rather than one expanding inside each card.
-          Expanding in place pushed every card below it down and made the list
-          jump under the dispatcher's thumb — the longer the driver roster, the
-          worse it got. */}
-      <Sheet
-        visible={assigning !== null}
-        onClose={() => setAssigning(null)}
-        title="Assign a driver"
-        subtitle={assigningDelivery?.order?.order_number ?? undefined}
-      >
-        {driversQ.isLoading ? (
-          <View style={{ gap: space.sm, paddingHorizontal: gutter, paddingVertical: space.md }}>
-            {Array.from({ length: 4 }).map((_, i) => <RowSkeleton key={i} />)}
-          </View>
-        ) : assignableDrivers.length === 0 ? (
-          <View style={{ paddingHorizontal: gutter }}>
-            <EmptyState
-              iconName="team"
-              compact
-              title="No drivers available"
-              subtitle="Add a driver from Team before assigning deliveries."
-            />
-          </View>
-        ) : (
-          <ScrollView keyboardShouldPersistTaps="handled">
-            {assignableDrivers.map((d, i) => (
-              <SheetOption
-                key={d.id}
-                icon="truck"
-                label={`${d.first_name} ${d.last_name}`}
-                hint={d.vehicle_plate ?? 'No vehicle on file'}
-                selected={assigningDelivery?.driver?.id === d.driver_record_id}
-                last={i === assignableDrivers.length - 1 && !assigningDelivery?.driver}
-                onPress={() => {
-                  if (assigning !== null) void assignDriver(assigning, d.driver_record_id);
-                }}
-              />
-            ))}
-
-            {assigningDelivery?.driver ? (
-              <Pressable
-                onPress={() => { if (assigning !== null) void assignDriver(assigning, null); }}
-                haptic="warning"
-                pressOpacity={0.6}
-                pressScale={1}
-                accessibilityRole="button"
-                style={{
-                  paddingHorizontal: gutter,
-                  paddingVertical: space.base,
-                  minHeight: layout.tapTarget,
-                  justifyContent: 'center',
-                }}
-              >
-                <Text variant="label" tone="danger">Unassign this driver</Text>
-              </Pressable>
-            ) : null}
-          </ScrollView>
-        )}
-      </Sheet>
     </View>
   );
 }
@@ -395,11 +300,10 @@ export default function DeliveriesScreen() {
 /* ── Card ───────────────────────────────────────────────────────────────── */
 
 function DeliveryCard({
-  delivery, index, busy, onToggleAssign, onAdvance, onFail, onOpenOrder }: {
+  delivery, index, busy, onAdvance, onFail, onOpenOrder }: {
   delivery: AdminDelivery;
   index: number;
   busy: boolean;
-  onToggleAssign: () => void;
   onAdvance: (next: DeliveryStatus) => void;
   onFail: () => void;
   onOpenOrder: () => void;
@@ -507,13 +411,7 @@ function DeliveryCard({
               </Pressable>
             ) : null}
 
-            {isLive ? (
-              <Pressable onPress={onToggleAssign} haptic="light" pressOpacity={0.6} hitSlop={8} disabled={busy}>
-                <Text variant="label" tone="brand">
-                  {delivery.driver ? 'Change' : 'Assign'}
-                </Text>
-              </Pressable>
-            ) : null}
+
           </View>
 
           {/* Actions */}

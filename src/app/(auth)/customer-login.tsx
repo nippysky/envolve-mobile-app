@@ -73,7 +73,10 @@ export default function CustomerLoginScreen() {
 
   return (
     <AuthScreen
-      eyebrow="Pharmacy account"
+      // Matches the "Customer login" door on the chooser, in its colour, so
+      // the two screens read as one movement.
+      eyebrow="Customer"
+      accent={color.brand}
       title="Sign in"
       subtitle="Use the email your pharmacy account was approved with."
       footer={

@@ -72,8 +72,10 @@ export default function StaffLoginScreen() {
 
   return (
     <AuthScreen
-      eyebrow="Operations"
-      title="Staff sign in"
+      // Matches the "Staff login" door on the chooser, in its colour.
+      eyebrow="Staff"
+      accent={color.accent}
+      title="Sign in"
       subtitle="For sales staff and drivers. Administrators sign in on the web console."
       footer={
         <Pressable

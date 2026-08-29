@@ -56,13 +56,17 @@ const STATUS_LABEL: Record<CustomerStatus, string> = {
 };
 
 /**
- * Anything before APPROVED/REJECTED is still in flight. A certificate that's
- * been uploaded but not yet moved to PENDING_REVIEW is still reviewable, so
- * both states offer the decision.
+ * The one status a rep may action.
+ *
+ * This used to list every pre-decision status on the reasoning that a customer
+ * who had uploaded a certificate was "still in flight" and so reviewable. The
+ * API disagrees: `PATCH /api/customers/[id]/review` accepts only
+ * PENDING_REVIEW from a STAFF session and answers 422 for anything else, so
+ * the extra three states put an Approve/Reject pair on screen that could only
+ * fail. Re-reviewing an APPROVED or REJECTED account is admin-only and lives
+ * in the web console.
  */
-const REVIEWABLE: CustomerStatus[] = [
-  'REGISTERED', 'OTP_CONFIRMED', 'PCN_CERT_UPLOADED', 'PENDING_REVIEW',
-];
+const REVIEWABLE: CustomerStatus[] = ['PENDING_REVIEW'];
 
 export default function ConsoleCustomerDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();

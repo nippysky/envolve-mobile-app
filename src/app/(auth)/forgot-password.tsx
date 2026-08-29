@@ -111,7 +111,10 @@ export default function ForgotPasswordScreen() {
 
   return (
     <AuthScreen
-      eyebrow={audience === 'staff' ? 'Operations' : 'Pharmacy account'}
+      // Same two contexts as the chooser, carried through so a reset started
+      // from the staff door stays green and says "Staff".
+      eyebrow={audience === 'staff' ? 'Staff' : 'Customer'}
+      accent={audience === 'staff' ? color.accent : color.brand}
       title={stage === 'request' ? 'Reset password' : 'Choose a new password'}
       subtitle={
         stage === 'request'

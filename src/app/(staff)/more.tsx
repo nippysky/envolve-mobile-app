@@ -102,7 +102,7 @@ export default function MoreScreen() {
                 label="Deliveries"
                 hint={awaiting > 0
                   ? `${awaiting} awaiting dispatch`
-                  : 'Assign drivers and track shipments'}
+                  : 'Track shipments and update status'}
                 alert={awaiting > 0 ? awaiting : undefined}
                 onPress={() => router.push('/(staff)/deliveries' as never)}
               />

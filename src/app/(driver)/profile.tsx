@@ -24,14 +24,16 @@ import { ScreenHeader } from '@/components/shared/ScreenHeader';
 import { color, space, radius, gutter, layout } from '@/constants/theme';
 import { callNumber } from '@/lib/contact';
 import { useAuth } from '@/contexts/AuthContext';
+import { useAppSettings } from '@/hooks/use-app-settings';
 import { listMyDeliveries, SETTLED } from '@/lib/services/driver.service';
 
-const SUPPORT_EMAIL = 'info@envolvepharm.com.ng';
-const DISPATCH_PHONE = '+2348055136726';
 
 export default function DriverProfileScreen() {
   const router = useRouter();
   const { user, logout } = useAuth();
+  // Set in Admin → Settings, so the office can change the number without
+  // shipping a new build.
+  const settings = useAppSettings();
 
   // A single page is enough for the two counters — this is a summary, not a
   // report, and History has the full picture.
@@ -146,8 +148,8 @@ export default function DriverProfileScreen() {
               <Row
                 icon="phone"
                 label="Call dispatch"
-                hint="+234 805 513 6726"
-                onPress={() => void callNumber(DISPATCH_PHONE)}
+                hint={settings.dispatch_phone}
+                onPress={() => void callNumber(settings.dispatch_phone)}
               />
               <Row
                 icon="lock"
@@ -162,7 +164,7 @@ export default function DriverProfileScreen() {
               <Icon name="info" size={13} color={color.textDisabled} />
               <Text variant="caption" tone="disabled" style={{ flex: 1 }}>
                 Your vehicle details and assignments are managed by the office.
-                Contact them, or email {SUPPORT_EMAIL}, to change them.
+                Contact them, or email {settings.support_email}, to change them.
               </Text>
             </View>
           </Animated.View>

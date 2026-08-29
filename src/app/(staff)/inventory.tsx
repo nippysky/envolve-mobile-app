@@ -10,20 +10,25 @@
  * something's expiring. Both are server-side flags the API already computes
  * (`is_low_stock`, `is_near_expiry`), so the client never re-derives a
  * threshold and drifts from the warehouse's definition.
+ *
+ * Read-only by design. Receiving, adjusting and batch edits are admin actions —
+ * the API returns 403 for anyone else — and no admin signs in to this app, so
+ * every write affordance here would fail for every user who could see it. A rep
+ * needs this screen to answer "have we got it, and does it expire soon?" while a
+ * pharmacist is on the phone; that is all it does.
  */
 
-import React, { useCallback, useMemo, useState } from 'react';
-import { View, ScrollView, RefreshControl } from 'react-native';
+import React, { useMemo, useState } from 'react';
+import { View, RefreshControl } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Image } from 'expo-image';
-import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import Animated, {
-  FadeIn, FadeInDown, useSharedValue, useAnimatedScrollHandler,
+  FadeInDown, useSharedValue, useAnimatedScrollHandler,
 } from 'react-native-reanimated';
 
 import {
-  Text, Button, Input, Pressable, Icon, Surface, Badge, EmptyState, RowSkeleton,
-  Sheet, SheetOption,
+  Text, Input, Pressable, Icon, Surface, Badge, EmptyState, RowSkeleton,
 } from '@/components/ui';
 import { ScreenHeader } from '@/components/shared/ScreenHeader';
 import { StatTile } from '@/components/admin/StatTile';
@@ -32,45 +37,15 @@ import { formatNaira, formatDate } from '@/lib/format';
 import { useRefresh } from '@/hooks/use-refresh';
 import { useDebounced } from '@/hooks/use-debounced';
 import {
-  listInventory, getInventoryStats, adjustStock, receiveStock, updateBatch,
-  listAdminProducts, type InventoryBatch, type AdminProduct,
+  listInventory, getInventoryStats, type InventoryBatch,
 } from '@/lib/services/admin.service';
-import { toast } from '@/lib/toast';
 
 type Filter = 'all' | 'low' | 'expiring';
 
-/**
- * The API takes `YYYY-MM-DD`. There's no date picker in this project, and
- * adding one for two optional fields isn't worth the native dependency, so the
- * field is typed — which means it has to be validated properly rather than
- * handed to `new Date()` and hoped for.
- */
-function parseIsoDate(s: string): { ok: true; value: string } | { ok: false; reason: string } {
-  const trimmed = s.trim();
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
-    return { ok: false, reason: 'Use the format YYYY-MM-DD, e.g. 2027-03-31.' };
-  }
-  const [y, m, d] = trimmed.split('-').map(Number);
-  const dt = new Date(Date.UTC(y, m - 1, d));
-  // Catches 2027-02-31, which Date would silently roll into March.
-  if (dt.getUTCFullYear() !== y || dt.getUTCMonth() !== m - 1 || dt.getUTCDate() !== d) {
-    return { ok: false, reason: 'That date doesn’t exist.' };
-  }
-  return { ok: true, value: trimmed };
-}
-
 export default function InventoryScreen() {
-  const queryClient = useQueryClient();
-
   const [rawSearch, setRawSearch] = useState('');
   const [filter,    setFilter]    = useState<Filter>('all');
-  const [adjusting, setAdjusting] = useState<number | null>(null);
-  const [delta,     setDelta]     = useState('');
-  const [reason,    setReason]    = useState('');
-  const [busy,      setBusy]      = useState(false);
 
-  const [receiving,    setReceiving]    = useState(false);
-  const [editingBatch, setEditingBatch] = useState<InventoryBatch | null>(null);
 
   const search = useDebounced(rawSearch, 350);
 
@@ -105,45 +80,6 @@ export default function InventoryScreen() {
     [inventoryQ.data],
   );
 
-  const closeAdjust = useCallback(() => {
-    setAdjusting(null);
-    setDelta('');
-    setReason('');
-  }, []);
-
-  /**
-   * Adjustment takes a signed delta, not a new total. Asking for "how many did
-   * you find/lose" rather than "what's the new number" makes the reason column
-   * meaningful and avoids a stocktake race where two people both set 40.
-   */
-  const submitAdjust = useCallback(async (batch: InventoryBatch) => {
-    const n = parseInt(delta, 10);
-    if (!Number.isFinite(n) || n === 0) {
-      toast.error('Enter how many to add or remove, e.g. -3.', 'Amount required');
-      return;
-    }
-    if (reason.trim().length < 3) {
-      toast.error('Say why — this goes in the audit trail.', 'Reason required');
-      return;
-    }
-    if (batch.quantity + n < 0) {
-      toast.error(`Only ${batch.quantity} left in this batch.`, 'Not enough stock');
-      return;
-    }
-
-    setBusy(true);
-    try {
-      await adjustStock({ batch_id: batch.id, quantity: n, reason: reason.trim() });
-      await queryClient.invalidateQueries({ queryKey: ['inventory'] });
-      closeAdjust();
-      toast.success(`${n > 0 ? '+' : ''}${n} on batch ${batch.batch_number}.`, 'Stock adjusted');
-    } catch (err) {
-      toast.error((err as Error).message, 'Could not adjust stock');
-    } finally {
-      setBusy(false);
-    }
-  }, [delta, reason, queryClient, closeAdjust]);
-
   const stats = statsQ.data;
 
 
@@ -156,18 +92,6 @@ export default function InventoryScreen() {
           variant="compact"
           back
           title="Inventory"
-          right={
-            <Pressable
-              onPress={() => setReceiving(true)}
-              haptic="medium"
-              pressScale={0.92}
-              hitSlop={8}
-              accessibilityRole="button"
-              accessibilityLabel="Receive stock"
-            >
-              <Icon name="plus" size={20} color={color.text} />
-            </Pressable>
-          }
         />
 
         <View style={{ paddingHorizontal: gutter, gap: space.md, paddingBottom: space.md }}>
@@ -255,19 +179,7 @@ export default function InventoryScreen() {
             />
           }
           renderItem={({ item, index }) => (
-            <BatchCard
-              batch={item}
-              index={index}
-              open={adjusting === item.id}
-              busy={busy}
-              delta={delta}
-              reason={reason}
-              onToggle={() => (adjusting === item.id ? closeAdjust() : setAdjusting(item.id))}
-              onDelta={setDelta}
-              onReason={setReason}
-              onSubmit={() => void submitAdjust(item)}
-              onEdit={() => setEditingBatch(item)}
-            />
+            <BatchCard batch={item} index={index} />
           )}
           ListEmptyComponent={
             inventoryQ.isLoading ? (
@@ -303,392 +215,11 @@ export default function InventoryScreen() {
         />
       </SafeAreaView>
 
-      <ReceiveStockSheet
-        visible={receiving}
-        onClose={() => setReceiving(false)}
-        onReceived={async () => {
-          await queryClient.invalidateQueries({ queryKey: ['inventory'] });
-          setReceiving(false);
-        }}
-      />
 
-      <EditBatchSheet
-        batch={editingBatch}
-        onClose={() => setEditingBatch(null)}
-        onSaved={async () => {
-          await queryClient.invalidateQueries({ queryKey: ['inventory'] });
-          setEditingBatch(null);
-        }}
-      />
     </View>
   );
 }
 
-/* ── Receive stock ──────────────────────────────────────────────────────────
-   Two states in one sheet rather than a sheet inside a sheet: pick the product
-   first, then fill the batch in. Nesting Modals is unreliable on Android, and
-   the two steps are sequential anyway.
-   ────────────────────────────────────────────────────────────────────────── */
-
-function ReceiveStockSheet({ visible, onClose, onReceived }: {
-  visible: boolean;
-  onClose: () => void;
-  onReceived: () => Promise<void>;
-}) {
-  const [product, setProduct] = useState<AdminProduct | null>(null);
-  const [rawSearch, setRawSearch] = useState('');
-  const search = useDebounced(rawSearch, 350);
-
-  const [batchNo, setBatchNo] = useState('');
-  const [qty,     setQty]     = useState('');
-  const [cost,    setCost]    = useState('');
-  const [expiry,  setExpiry]  = useState('');
-  const [notes,   setNotes]   = useState('');
-  const [busy,    setBusy]    = useState(false);
-  const [errs,    setErrs]    = useState<Record<string, string>>({});
-
-  const productsQ = useQuery({
-    queryKey: ['products', 'console', search, null],
-    queryFn:  () => listAdminProducts({ search, limit: 25 }),
-    enabled:  visible && !product,
-    staleTime: 60_000,
-  });
-
-  const reset = useCallback(() => {
-    setProduct(null); setRawSearch('');
-    setBatchNo(''); setQty(''); setCost(''); setExpiry(''); setNotes('');
-    setErrs({});
-  }, []);
-
-  const close = useCallback(() => { reset(); onClose(); }, [reset, onClose]);
-
-  const submit = useCallback(async () => {
-    if (!product || busy) return;
-
-    const e: Record<string, string> = {};
-    const q = parseInt(qty, 10);
-    const c = parseFloat(cost);
-
-    if (batchNo.trim().length < 1)      e.batchNo = 'Enter the batch number from the carton.';
-    if (!Number.isFinite(q) || q <= 0)  e.qty     = 'Enter how many packs arrived.';
-    if (!Number.isFinite(c) || c <= 0)  e.cost    = 'Enter what you paid per pack.';
-
-    let expiryValue: string | undefined;
-    if (expiry.trim()) {
-      const parsed = parseIsoDate(expiry);
-      if (!parsed.ok) e.expiry = parsed.reason;
-      else expiryValue = parsed.value;
-    }
-
-    setErrs(e);
-    if (Object.keys(e).length) return;
-
-    setBusy(true);
-    try {
-      await receiveStock({
-        product_id:   product.id,
-        batch_number: batchNo.trim(),
-        quantity:     q,
-        cost_price:   c,
-        expiry_date:  expiryValue,
-        notes:        notes.trim() || undefined,
-      });
-      toast.success(`${q} packs of ${product.brand_name} added.`, 'Stock received');
-      reset();
-      await onReceived();
-    } catch (err) {
-      const e2 = err as Error & { status?: number };
-      // The batch number is unique platform-wide; 409 means it's already used.
-      if (e2.status === 409) {
-        setErrs({ batchNo: 'That batch number is already in use.' });
-      } else {
-        toast.error(e2.message, 'Could not receive stock');
-      }
-    } finally {
-      setBusy(false);
-    }
-  }, [product, busy, batchNo, qty, cost, expiry, notes, reset, onReceived]);
-
-  const records = productsQ.data?.records ?? [];
-
-  return (
-    <Sheet
-      visible={visible}
-      onClose={close}
-      detent="tall"
-      title={product ? 'Receive stock' : 'Which product?'}
-      subtitle={product ? product.brand_name : 'Search the catalogue to start a new batch.'}
-      footer={product ? (
-        <Button
-          fullWidth
-          size="lg"
-          loading={busy}
-          disabled={busy}
-          onPress={submit}
-          haptic="medium"
-        >
-          {busy ? 'Receiving…' : 'Receive into stock'}
-        </Button>
-      ) : undefined}
-    >
-      {!product ? (
-        <>
-          <View style={{ paddingHorizontal: gutter, paddingVertical: space.md }}>
-            <Input
-              placeholder="Search brand, generic or SKU"
-              value={rawSearch}
-              onChangeText={setRawSearch}
-              autoCapitalize="none"
-              autoCorrect={false}
-              returnKeyType="search"
-              leading={<Icon name="search" size={17} color={color.textTertiary} />}
-            />
-          </View>
-
-          <ScrollView keyboardShouldPersistTaps="handled">
-            {productsQ.isLoading ? (
-              <View style={{ gap: space.sm, paddingHorizontal: gutter }}>
-                {Array.from({ length: 5 }).map((_, i) => <RowSkeleton key={i} />)}
-              </View>
-            ) : records.length === 0 ? (
-              <View style={{ paddingHorizontal: gutter }}>
-                <EmptyState
-                  iconName="search"
-                  compact
-                  title="No products found"
-                  subtitle={rawSearch
-                    ? `Nothing matches “${rawSearch}”.`
-                    : 'Start typing to search the catalogue.'}
-                />
-              </View>
-            ) : (
-              records.map((p, i) => (
-                <SheetOption
-                  key={p.sku}
-                  icon="product"
-                  // Strength and pack size are what separate two products that
-                  // share a brand. Without them the picker shows what look like
-                  // duplicate rows and you can receive stock against the wrong
-                  // one — the same distinction the catalogue now keys identity
-                  // on, so the two have to agree.
-                  label={[p.brand_name, p.product_strength, p.pack_size]
-                    .filter(Boolean).join(' · ')}
-                  hint={[p.generic_name, p.sku].filter(Boolean).join(' · ')}
-                  trailing={`${p.total_stock} in stock`}
-                  last={i === records.length - 1}
-                  onPress={() => setProduct(p)}
-                />
-              ))
-            )}
-          </ScrollView>
-        </>
-      ) : (
-        <ScrollView keyboardShouldPersistTaps="handled">
-          <View style={{ paddingHorizontal: gutter, paddingVertical: space.md, gap: space.base }}>
-            <Pressable
-              onPress={() => setProduct(null)}
-              haptic="light"
-              pressOpacity={0.6}
-              style={{ flexDirection: 'row', alignItems: 'center', gap: space.sm }}
-            >
-              <Icon name="chevron-left" size={15} color={color.brand} />
-              <Text variant="label" tone="brand">Choose a different product</Text>
-            </Pressable>
-
-            <Input
-              label="Batch number"
-              placeholder="As printed on the carton"
-              value={batchNo}
-              onChangeText={t => { setBatchNo(t); setErrs(p => ({ ...p, batchNo: '' })); }}
-              error={errs.batchNo}
-              autoCapitalize="characters"
-              editable={!busy}
-              required
-            />
-
-            <View style={{ flexDirection: 'row', gap: space.md }}>
-              <Input
-                label="Packs received"
-                placeholder="0"
-                value={qty}
-                onChangeText={t => { setQty(t); setErrs(p => ({ ...p, qty: '' })); }}
-                error={errs.qty}
-                keyboardType="number-pad"
-                editable={!busy}
-                required
-                containerStyle={{ flex: 1 }}
-              />
-              <Input
-                label="Cost per pack"
-                placeholder="0"
-                value={cost}
-                onChangeText={t => { setCost(t); setErrs(p => ({ ...p, cost: '' })); }}
-                error={errs.cost}
-                keyboardType="decimal-pad"
-                editable={!busy}
-                required
-                leading={<Text variant="callout" tone="tertiary">₦</Text>}
-                containerStyle={{ flex: 1 }}
-              />
-            </View>
-
-            <Input
-              label="Expiry date"
-              placeholder="YYYY-MM-DD"
-              hint="Leave blank if this stock doesn’t expire"
-              value={expiry}
-              onChangeText={t => { setExpiry(t); setErrs(p => ({ ...p, expiry: '' })); }}
-              error={errs.expiry}
-              keyboardType="numbers-and-punctuation"
-              autoCapitalize="none"
-              editable={!busy}
-            />
-
-            <Input
-              label="Note"
-              placeholder="Optional — supplier, invoice number"
-              value={notes}
-              onChangeText={setNotes}
-              editable={!busy}
-              multiline
-            />
-
-            <Surface tone="subtle" level="none" padded="md" rounded="md">
-              <View style={{ flexDirection: 'row', gap: space.sm }}>
-                <Icon name="info" size={14} color={color.textTertiary} />
-                <Text variant="caption" tone="tertiary" style={{ flex: 1 }}>
-                  This creates a new batch, records the stock movement against your
-                  name, and updates the product’s last cost price.
-                </Text>
-              </View>
-            </Surface>
-          </View>
-        </ScrollView>
-      )}
-    </Sheet>
-  );
-}
-
-/* ── Edit a batch ───────────────────────────────────────────────────────── */
-
-function EditBatchSheet({ batch, onClose, onSaved }: {
-  batch: InventoryBatch | null;
-  onClose: () => void;
-  onSaved: () => Promise<void>;
-}) {
-  const [batchNo, setBatchNo] = useState('');
-  const [cost,    setCost]    = useState('');
-  const [expiry,  setExpiry]  = useState('');
-  const [busy,    setBusy]    = useState(false);
-  const [errs,    setErrs]    = useState<Record<string, string>>({});
-
-  // Re-seed whenever a different batch is opened. Adjusted during render, not
-  // in an effect, so the sheet never paints last batch's values for a frame.
-  const [seededFor, setSeededFor] = useState<number | null>(null);
-  if (batch && seededFor !== batch.id) {
-    setSeededFor(batch.id);
-    setBatchNo(batch.batch_number);
-    setCost(batch.cost_price > 0 ? String(batch.cost_price) : '');
-    setExpiry(batch.expiry_date ? batch.expiry_date.slice(0, 10) : '');
-    setErrs({});
-  }
-
-  const submit = useCallback(async () => {
-    if (!batch || busy) return;
-
-    const e: Record<string, string> = {};
-    const c = parseFloat(cost);
-    if (batchNo.trim().length < 1)     e.batchNo = 'Batch number can’t be empty.';
-    if (!Number.isFinite(c) || c <= 0) e.cost    = 'Enter the cost per pack.';
-
-    // Empty clears the expiry; the API accepts null for exactly that.
-    let expiryValue: string | null = null;
-    if (expiry.trim()) {
-      const parsed = parseIsoDate(expiry);
-      if (!parsed.ok) e.expiry = parsed.reason;
-      else expiryValue = parsed.value;
-    }
-
-    setErrs(e);
-    if (Object.keys(e).length) return;
-
-    setBusy(true);
-    try {
-      await updateBatch(batch.id, {
-        batch_number: batchNo.trim(),
-        cost_price:   c,
-        expiry_date:  expiryValue,
-      });
-      toast.success(`Batch ${batchNo.trim()} updated.`);
-      await onSaved();
-    } catch (err) {
-      const e2 = err as Error & { status?: number };
-      if (e2.status === 409) setErrs({ batchNo: 'That batch number is already in use.' });
-      else toast.error(e2.message, 'Could not save');
-    } finally {
-      setBusy(false);
-    }
-  }, [batch, busy, batchNo, cost, expiry, onSaved]);
-
-  return (
-    <Sheet
-      visible={!!batch}
-      onClose={onClose}
-      title="Edit batch"
-      subtitle={batch?.product.brand_name}
-      footer={
-        <Button fullWidth size="lg" loading={busy} disabled={busy} onPress={submit} haptic="medium">
-          {busy ? 'Saving…' : 'Save changes'}
-        </Button>
-      }
-    >
-      <View style={{ paddingHorizontal: gutter, paddingVertical: space.md, gap: space.base }}>
-        <Input
-          label="Batch number"
-          value={batchNo}
-          onChangeText={t => { setBatchNo(t); setErrs(p => ({ ...p, batchNo: '' })); }}
-          error={errs.batchNo}
-          autoCapitalize="characters"
-          editable={!busy}
-          required
-        />
-
-        <Input
-          label="Cost per pack"
-          value={cost}
-          onChangeText={t => { setCost(t); setErrs(p => ({ ...p, cost: '' })); }}
-          error={errs.cost}
-          keyboardType="decimal-pad"
-          editable={!busy}
-          required
-          leading={<Text variant="callout" tone="tertiary">₦</Text>}
-        />
-
-        <Input
-          label="Expiry date"
-          placeholder="YYYY-MM-DD"
-          hint="Clear this field to remove the expiry"
-          value={expiry}
-          onChangeText={t => { setExpiry(t); setErrs(p => ({ ...p, expiry: '' })); }}
-          error={errs.expiry}
-          keyboardType="numbers-and-punctuation"
-          autoCapitalize="none"
-          editable={!busy}
-        />
-
-        <Surface tone="subtle" level="none" padded="md" rounded="md">
-          <View style={{ flexDirection: 'row', gap: space.sm }}>
-            <Icon name="info" size={14} color={color.textTertiary} />
-            <Text variant="caption" tone="tertiary" style={{ flex: 1 }}>
-              Quantity isn’t editable here — stock levels move through an
-              adjustment so every change keeps its reason.
-            </Text>
-          </View>
-        </Surface>
-      </View>
-    </Sheet>
-  );
-}
 
 /* ── Bits ───────────────────────────────────────────────────────────────── */
 
@@ -739,21 +270,9 @@ function FilterChip({ label, count, tone, active, onPress }: {
   );
 }
 
-function BatchCard({
-  batch, index, open, busy, delta, reason,
-  onToggle, onDelta, onReason, onSubmit, onEdit,
-}: {
+function BatchCard({ batch, index }: {
   batch: InventoryBatch;
   index: number;
-  open: boolean;
-  busy: boolean;
-  delta: string;
-  reason: string;
-  onToggle: () => void;
-  onDelta: (v: string) => void;
-  onReason: (v: string) => void;
-  onSubmit: () => void;
-  onEdit: () => void;
 }) {
   return (
     <Animated.View entering={FadeInDown.delay(Math.min(index, 8) * 40).duration(320)}>
@@ -800,7 +319,9 @@ function BatchCard({
             borderTopWidth: layout.hairlineWidth,
             borderTopColor: color.borderSubtle,
           }}>
-            <Meta label="Cost" value={formatNaira(batch.cost_price)} />
+            {/* No cost price here. Only STAFF and DRIVER reach this app, and
+                showing a rep what we paid gives them the margin on every batch.
+                Admins see it in the web console. */}
             <Meta
               label="Expires"
               value={batch.expiry_date ? formatDate(batch.expiry_date) : 'No date'}
@@ -809,63 +330,6 @@ function BatchCard({
             <Meta label="Min level" value={String(batch.product.minimum_stock_level)} />
           </View>
 
-          <View style={{ flexDirection: 'row', gap: space.sm }}>
-            <Button
-              size="sm"
-              variant={open ? 'secondary' : 'tinted'}
-              style={{ flex: 1 }}
-              onPress={onToggle}
-              disabled={busy}
-              icon={<Icon name={open ? 'close' : 'inventory'} size={14} color={open ? color.text : color.brand} />}
-            >
-              {open ? 'Cancel' : 'Adjust stock'}
-            </Button>
-
-            {/* Corrects the batch's own details — expiry, cost, number. Stock
-                level deliberately isn't here; that's what Adjust is for. */}
-            <Button
-              size="sm"
-              variant="secondary"
-              onPress={onEdit}
-              disabled={busy}
-              icon={<Icon name="edit" size={14} color={color.text} />}
-            >
-              Details
-            </Button>
-          </View>
-
-          {open ? (
-            <Animated.View entering={FadeIn.duration(220)} style={{ gap: space.md }}>
-              <Input
-                label="Add or remove"
-                hint="Signed — e.g. 12 to add, -3 to remove"
-                placeholder="-3"
-                value={delta}
-                onChangeText={onDelta}
-                keyboardType="numbers-and-punctuation"
-                editable={!busy}
-                required
-              />
-              <Input
-                label="Reason"
-                hint="Recorded in the audit trail against your name"
-                placeholder="Damaged in transit"
-                value={reason}
-                onChangeText={onReason}
-                editable={!busy}
-                required
-              />
-              <Button
-                fullWidth
-                loading={busy}
-                disabled={busy}
-                onPress={onSubmit}
-                haptic="medium"
-              >
-                Apply adjustment
-              </Button>
-            </Animated.View>
-          ) : null}
         </View>
       </Surface>
     </Animated.View>

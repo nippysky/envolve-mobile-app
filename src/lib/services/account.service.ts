@@ -167,3 +167,34 @@ export function markNotificationsRead(ids?: number[]) {
 export function getUnreadCount() {
   return apiFetch<{ unread_count: number }>('/api/notifications/unread-count');
 }
+
+/* ── App settings ───────────────────────────────────────────────────────── */
+
+export interface AppSettings {
+  /** Number the driver app dials from "Call dispatch" — the warehouse. */
+  dispatch_phone: string;
+  /** General line a customer calls for help. Distinct from dispatch. */
+  support_phone:  string;
+  /** Address shown for account-change requests. */
+  support_email:  string;
+  company_name:   string;
+}
+
+/**
+ * The values that were hardcoded before these moved into Admin → Settings.
+ *
+ * Used when the request fails or hasn't landed yet, so a screen never renders
+ * an empty phone number — a driver with no signal still needs something to
+ * call.
+ */
+export const APP_SETTINGS_FALLBACK: AppSettings = {
+  dispatch_phone: '+2348055136726',
+  support_phone:  '+2348055136726',
+  support_email:  'info@envolvepharm.com.ng',
+  company_name:   'Envolve Pharmaceuticals',
+};
+
+/** Readable by any signed-in role — see GET /api/settings/app. */
+export function getAppSettings() {
+  return apiFetch<AppSettings>('/api/settings/app');
+}

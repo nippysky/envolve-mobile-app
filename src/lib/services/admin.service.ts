@@ -1,22 +1,26 @@
 /**
- * Admin & staff console service layer.
+ * Staff console service layer.
  *
  * Every shape here was read off the web route handlers rather than assumed.
- * Two conventions worth internalising before editing anything below:
+ * One convention worth internalising before editing anything below: paginated
+ * routes return `records`, never `items`. Reading `data.items` yields
+ * `undefined` and renders an empty list with no error — the most common way to
+ * break an integration against this API.
  *
- *   • Paginated routes return `records`, never `items`. Reading `data.items`
- *     yields `undefined` and renders an empty list with no error — it's the
- *     most common way to break an integration against this API.
- *   • `/api/staff` serves STAFF **and** DRIVER users from one endpoint. The
- *     `role` field distinguishes them, and drivers carry `driver_record_id`,
- *     which is the *driver table* primary key — not `id`, which is the user
- *     id. Delivery assignment needs `driver_record_id`.
+ * Role gates, taken from the route handlers. Only STAFF and DRIVER reach this
+ * app, so anything ADMIN-only simply has no binding here:
  *
- * Role gates, taken from the route handlers:
- *   ADMIN only        → staff CRUD, settings, audit logs, product writes,
- *                       assign-staff, quick-import
- *   ADMIN or STAFF    → orders, customers, inventory, reports, search
- *   + DRIVER          → deliveries
+ *   ADMIN only     → staff CRUD, settings, audit logs, assign-staff, driver
+ *                    assignment, every inventory write, and every catalogue
+ *                    write (products, images, categories, manufacturers)
+ *   ADMIN or STAFF → orders, customers, catalogue reads, inventory reads,
+ *                    reports, search
+ *   + DRIVER       → deliveries
+ *
+ * Reps see the whole customer book, not just their own accounts — cover and
+ * hand-offs are routine, so ownership is displayed rather than enforced. The
+ * assigned rep comes back on every customer record; show it, don't filter on
+ * it, and don't offer to change it, because reassignment is ADMIN-only.
  */
 
 import { apiFetch } from '@/lib/api-client';
@@ -413,60 +417,6 @@ export function getInventoryStats() {
   return apiFetch<InventoryStats>('/api/inventory/stats');
 }
 
-/** Positive `quantity` adds stock, negative removes it. `reason` is audited. */
-export function adjustStock(input: {
-  batch_id: number; quantity: number; reason: string;
-}) {
-  return apiFetch<{ id: number; quantity: number }>('/api/inventory/adjust', {
-    method: 'POST',
-    body:   JSON.stringify(input),
-  });
-}
-
-/**
- * Receive a new batch into stock.
- *
- * Distinct from `adjustStock`, which corrects a batch that already exists.
- * This creates the batch, writes an IN stock movement and updates the
- * product's last cost price, all in one server-side transaction.
- *
- * `batch_number` is unique platform-wide — a duplicate comes back as a 409,
- * which the caller should surface as "that batch number is already in use"
- * rather than a generic failure.
- */
-export function receiveStock(input: {
-  product_id:   number;
-  batch_number: string;
-  quantity:     number;
-  cost_price:   number;
-  /** ISO `YYYY-MM-DD`. Omit for stock that doesn't expire. */
-  expiry_date?: string;
-  notes?:       string;
-}) {
-  return apiFetch<{ batch: { id: number; batch_number: string; quantity: number } }>(
-    '/api/inventory/receive',
-    { method: 'POST', body: JSON.stringify(input) },
-  );
-}
-
-/**
- * Correct a batch's details.
- *
- * Quantity is deliberately not patchable here — stock levels move through
- * `adjustStock` so every change leaves a reason and a stock movement behind.
- * Pass `expiry_date: null` to clear an expiry that was entered by mistake.
- */
-export function updateBatch(id: number, patch: {
-  batch_number?: string;
-  cost_price?:   number;
-  expiry_date?:  string | null;
-}) {
-  return apiFetch<InventoryBatch>(`/api/inventory/batches/${id}`, {
-    method: 'PATCH',
-    body:   JSON.stringify(patch),
-  });
-}
-
 /* ══ Deliveries ════════════════════════════════════════════════════════════ */
 
 export interface AdminDelivery {
@@ -514,11 +464,13 @@ export function listDeliveries(opts: {
  * inferred from `status: 'DELIVERED'` — a driver who hands over without
  * collecting must not silently leave the books showing paid.
  *
- * `driver_id` is the driver-table id (`driver_record_id` on a staff record).
+ * There is deliberately no `driver_id` here. Assigning or reassigning a driver
+ * is ADMIN-only — the route rejects it from any other session — and no role
+ * that reaches this app is an admin, so accepting the field would only let a
+ * caller build a request the server is certain to refuse.
  */
 export function updateDelivery(id: number, input: {
   status?: DeliveryStatus;
-  driver_id?: number | null;
   notes?: string;
   cash_collected?: boolean;
 }) {
@@ -557,15 +509,6 @@ export interface StaffMember {
   driver_record_id:    number | null;
   /** Customer accounts this person owns as sales rep. */
   assigned_customers:  number;
-}
-
-export function listStaff(opts: {
-  page?: number; limit?: number; search?: string;
-  role?: StaffRole | null; status?: string | null;
-} = {}) {
-  return apiFetch<Paginated<StaffMember>>(`/api/staff?${qs({
-    page: opts.page ?? 1, limit: opts.limit ?? 100,
-    search: opts.search, role: opts.role, status: opts.status })}`);
 }
 
 /* ══ Search ════════════════════════════════════════════════════════════════ */

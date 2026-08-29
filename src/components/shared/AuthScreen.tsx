@@ -29,17 +29,25 @@ export interface AuthScreenProps {
   footer?:   React.ReactNode;
   showBack?: boolean;
   contentStyle?: StyleProp<ViewStyle>;
+  /**
+   * Tint for the wash and the eyebrow. Each door on the chooser owns a colour;
+   * passing the same one here means the screen you land on reads as a
+   * continuation of the card you tapped rather than a new place. Defaults to
+   * brand, which is what every screen used before this existed.
+   */
+  accent?:   string;
 }
 
 export function AuthScreen({
   eyebrow, title, subtitle, children, footer, showBack = true, contentStyle,
+  accent = color.brand,
 }: AuthScreenProps) {
   const router = useRouter();
 
   return (
     <View style={{ flex: 1, backgroundColor: color.bg }}>
       <LinearGradient
-        colors={[`${color.brand}10`, 'transparent']}
+        colors={[`${accent}14`, 'transparent']}
         style={{ position: 'absolute', left: 0, right: 0, top: 0, height: 300 }}
       />
 
@@ -87,7 +95,7 @@ export function AuthScreen({
               style={{ paddingTop: space.lg, marginBottom: space['2xl'] }}
             >
               {eyebrow ? (
-                <Text variant="overline" tone="brand" style={{ marginBottom: space.sm }}>
+                <Text variant="overline" style={{ marginBottom: space.sm, color: accent }}>
                   {eyebrow}
                 </Text>
               ) : null}

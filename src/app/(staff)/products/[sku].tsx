@@ -201,10 +201,10 @@ export default function ConsoleProductDetailScreen() {
               <Fact label="Per carton" value={product.quantity_per_carton ? `${product.quantity_per_carton} packs` : null} />
               <Fact label="Manufacturer" value={product.manufacturer?.name ?? null} />
               <Fact label="Shelf" value={product.shelf_location} />
-              <Fact
-                label="Last cost"
-                value={product.last_cost_price ? formatNaira(product.last_cost_price) : null}
-              />
+              {/* Cost price is deliberately absent. Shown beside the selling
+                  price it hands every rep the margin on the whole catalogue,
+                  which is the company's to know, not the field team's. Admins
+                  see it in the web editor and on the inventory page. */}
               <Fact label="Updated" value={formatDate(product.updated_at)} last />
             </Surface>
           </Animated.View>

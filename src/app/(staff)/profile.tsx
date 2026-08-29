@@ -23,9 +23,8 @@ import {
 import { ScreenHeader } from '@/components/shared/ScreenHeader';
 import { color, space, radius, gutter, layout } from '@/constants/theme';
 import { useAuth } from '@/contexts/AuthContext';
+import { useAppSettings } from '@/hooks/use-app-settings';
 import type { IconName } from '@/components/ui/Icon';
-
-const SUPPORT_EMAIL = 'info@envolvepharm.com.ng';
 
 const ROLE_BLURB: Record<string, string> = {
   STAFF:  'Orders, customers and deliveries for the accounts assigned to you.',
@@ -35,6 +34,7 @@ const ROLE_BLURB: Record<string, string> = {
 export default function ConsoleProfileScreen() {
   const router = useRouter();
   const { user, logout } = useAuth();
+  const settings = useAppSettings();
 
   const name = `${user?.first_name ?? ''} ${user?.last_name ?? ''}`.trim();
   const initials = name.split(' ').filter(Boolean).slice(0, 2)
@@ -142,7 +142,7 @@ export default function ConsoleProfileScreen() {
               <Icon name="info" size={13} color={color.textDisabled} />
               <Text variant="caption" tone="disabled" style={{ flex: 1 }}>
                 Staff records are maintained by the office. Ask them, or email{' '}
-                {SUPPORT_EMAIL}, to change your name, email or role.
+                {settings.support_email}, to change your name, email or role.
               </Text>
             </View>
 
@@ -150,7 +150,7 @@ export default function ConsoleProfileScreen() {
               variant="secondary"
               fullWidth
               onPress={() => void Linking.openURL(
-                `mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent('Account change request')}`,
+                `mailto:${settings.support_email}?subject=${encodeURIComponent('Account change request')}`,
               )}
               icon={<Icon name="email" size={16} color={color.text} />}
             >

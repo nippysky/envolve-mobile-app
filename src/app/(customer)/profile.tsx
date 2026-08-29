@@ -27,15 +27,16 @@ import { callNumber, emailAddress } from '@/lib/contact';
 import { formatNaira, formatDate } from '@/lib/format';
 import { useRefresh } from '@/hooks/use-refresh';
 import { useAuth } from '@/contexts/AuthContext';
+import { useAppSettings } from '@/hooks/use-app-settings';
 import { getMyAccount } from '@/lib/services/account.service';
 import type { IconName } from '@/components/ui/Icon';
-
-const SUPPORT_EMAIL = 'info@envolvepharm.com.ng';
-const SUPPORT_PHONE = '+2348055136726';
 
 export default function AccountScreen() {
   const router = useRouter();
   const { user, logout } = useAuth();
+  // Support contacts live in Admin → Settings so they can change without
+  // an app release.
+  const settings = useAppSettings();
 
   const { data, isLoading, refetch } = useQuery({
     queryKey: ['account', 'me'],
@@ -253,14 +254,14 @@ export default function AccountScreen() {
               <MenuRow
                 icon="email"
                 label="Email us"
-                hint={SUPPORT_EMAIL}
-                onPress={() => void emailAddress(SUPPORT_EMAIL)}
+                hint={settings.support_email}
+                onPress={() => void emailAddress(settings.support_email)}
               />
               <MenuRow
                 icon="phone"
                 label="Call us"
                 hint="+234 805 513 6726"
-                onPress={() => void callNumber(SUPPORT_PHONE)}
+                onPress={() => void callNumber(settings.support_phone)}
                 last
               />
             </Surface>
